@@ -9,7 +9,11 @@
   클라 → 서버
     {t:'hello', name}                 접속 인사. 닉네임 등록
     {t:'list_rooms'}                  방 목록 요청
-    {t:'create_room', name}           방 생성 (생성자가 방장)
+    {t:'create_room', name, max, secs, win}
+                                      방 생성 (생성자가 방장)
+                                      max  2|3|4        정원
+                                      secs 60|120|180|300 제한시간
+                                      win  60|null      승리 점령률(%)
     {t:'join', room}                  방 입장
     {t:'leave'}                       방 퇴장
     {t:'relay', data}                 같은 방 상대에게 그대로 전달 (게임 상태 자리)
@@ -18,7 +22,8 @@
     {t:'welcome', id, name}           내 접속 id
     {t:'room_list', rooms:[...]}      방 목록 (로비에 있는 사람에게만)
     {t:'joined', room, you}           입장 성공. you = 'host' | 'guest'
-    {t:'room_update', room, members}  방 인원 변화 (같은 방 전원에게)
+    {t:'room_update', room, members}  방 인원·설정 변화 (같은 방 전원에게)
+    {t:'host_changed', host, name}    방장 위임 알림 (같은 방 전원에게)
     {t:'peer', event, id, name}       상대 입장/퇴장 알림. event = 'join' | 'leave'
     {t:'left'}                        내 퇴장 확인
     {t:'error', msg}                  거절 사유
@@ -46,7 +51,9 @@ from websockets.exceptions import ConnectionClosed
 HOST = '127.0.0.1'
 PORT = 5002
 WS_PATH = '/game/ws'
-ROOM_MAX = 2
+ROOM_CAPS = (2, 3, 4)                  # 허용 정원
+ROOM_SECS = (60, 120, 180, 300)        # 허용 제한시간(초)
+ROOM_WINS = (60, None)                 # 허용 승리 점령률(%)
 NAME_MAX = 20            # 방 이름 길이 제한
 ROOM_LIMIT = 40          # 동시 방 개수 상한 (무한 생성 방지)
 IDLE_ROOM_SEC = 3600     # 아무도 없는 방은 이 시간 뒤 정리
@@ -80,23 +87,32 @@ class Client:
 
 
 class Room:
-    def __init__(self, rid, name, host_id):
+    def __init__(self, rid, name, host_id, cap, secs, win):
         self.id = rid
         self.name = name
         self.host = host_id       # 방장 = 게임 계산 주체
         self.members = [host_id]
+        self.cap = cap            # 정원 2~4
+        self.secs = secs          # 제한시간(초)
+        self.win = win            # 승리 점령률(%) 또는 None
         self.created = time.time()
 
     @property
+    def full(self):
+        return len(self.members) >= self.cap
+
+    @property
     def state(self):
-        return 'play' if len(self.members) >= ROOM_MAX else 'wait'
+        return 'play' if self.full else 'wait'
 
     def info(self):
         return {
             'id': self.id,
             'name': self.name,
             'players': len(self.members),
-            'max': ROOM_MAX,
+            'max': self.cap,
+            'secs': self.secs,
+            'win': self.win,
             'state': self.state,
             'host': self.host,
         }
@@ -127,6 +143,17 @@ async def push_room_state(room):
                          return_exceptions=True)
 
 
+def pick(raw, allowed, fallback):
+    """허용 목록에 있는 값만 받는다. 클라이언트 값을 그대로 믿지 않는다."""
+    if raw in allowed:
+        return raw
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return fallback
+    return n if n in allowed else fallback
+
+
 def clean_name(raw, fallback):
     if not isinstance(raw, str):
         return fallback
@@ -151,10 +178,19 @@ async def leave_room(client, notify=True):
         rooms.pop(rid, None)
         log.info('방 삭제 %s (%s)', rid, room.name)
     else:
-        # 방장이 나가면 남은 사람이 방장이 된다
+        # 방장이 나가면 남은 사람이 방장이 된다 (방은 해체하지 않는다)
+        handed = False
         if room.host == client.id:
             room.host = room.members[0]
+            handed = True
         if notify:
+            if handed:
+                new_host = clients.get(room.host)
+                await asyncio.gather(
+                    *[clients[cid].send({'t': 'host_changed', 'host': room.host,
+                                         'name': new_host.name if new_host else '?'})
+                      for cid in room.members if cid in clients],
+                    return_exceptions=True)
             await asyncio.gather(
                 *[clients[cid].send({'t': 'peer', 'event': 'leave', 'id': client.id, 'name': client.name})
                   for cid in room.members if cid in clients],
@@ -182,11 +218,16 @@ async def handle(client, msg):
             return
         rid = secrets.token_hex(3)
         name = clean_name(msg.get('name'), client.name + '의 방')
-        room = Room(rid, name, client.id)
+        cap = pick(msg.get('max'), ROOM_CAPS, 2)
+        secs = pick(msg.get('secs'), ROOM_SECS, 180)
+        win = msg.get('win')
+        win = 60 if win == 60 or win == '60' else None
+        room = Room(rid, name, client.id, cap, secs, win)
         rooms[rid] = room
         client.room = rid
         client.in_lobby = False
-        log.info('방 생성 %s "%s" by %s', rid, name, client.name)
+        log.info('방 생성 %s "%s" by %s (정원 %d · %d초 · 승리 %s)',
+                 rid, name, client.name, cap, secs, str(win) + '%' if win else '없음')
         await client.send({'t': 'joined', 'room': room.info(), 'you': 'host'})
         await push_room_state(room)
         await push_room_list()
@@ -198,7 +239,7 @@ async def handle(client, msg):
             await client.send({'t': 'error', 'msg': '없는 방입니다.'})
             await client.send({'t': 'room_list', 'rooms': room_list()})
             return
-        if len(room.members) >= ROOM_MAX:
+        if room.full:
             await client.send({'t': 'error', 'msg': '방이 가득 찼습니다.'})
             return
         if client.room:

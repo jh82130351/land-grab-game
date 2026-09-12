@@ -39,6 +39,16 @@
   .field{width:min(340px,80vw);padding:13px 15px;border-radius:9px;font:inherit;font-size:15px;
          color:var(--fg);background:#12151b;border:1px solid var(--line);text-align:center}
   .field:focus{outline:none;border-color:#4a6b8a;background:#141922}
+  .opts{display:flex;flex-direction:column;gap:10px;width:min(380px,86vw);margin-top:2px}
+  .opt{display:flex;align-items:center;gap:12px}
+  .opt .lb{width:88px;text-align:left;font-size:13px;color:var(--dim);flex:none}
+  .seg{flex:1;display:flex;gap:6px}
+  .seg button{flex:1;padding:9px 0;border-radius:7px;font:inherit;font-size:13px;font-weight:600;
+              color:var(--dim);background:#12151b;border:1px solid var(--line);transition:.12s}
+  .seg button:hover{color:var(--fg);border-color:#3a414d}
+  .seg button.on{background:#1d2a20;border-color:#33553a;color:var(--fg)}
+  .setting{font-size:12.5px;color:var(--dim)}
+  .setting b{color:var(--fg);font-weight:600}
 
   /* 순위표 */
   .rank{display:flex;flex-direction:column;gap:7px;width:100%;max-width:340px;margin-top:4px}
@@ -182,8 +192,13 @@
 
 <section id="screen-create" class="screen">
   <h2>방 만들기</h2>
-  <p>방 이름을 정하세요 · 정원 2명</p>
+  <p>이름과 규칙을 정하세요</p>
   <input id="create-name" class="field" maxlength="20" autocomplete="off" spellcheck="false">
+  <div class="opts">
+    <div class="opt"><span class="lb">인원</span><div class="seg" id="opt-max"></div></div>
+    <div class="opt"><span class="lb">제한시간</span><div class="seg" id="opt-secs"></div></div>
+    <div class="opt"><span class="lb">승리 점령률</span><div class="seg" id="opt-win"></div></div>
+  </div>
   <div class="btns">
     <button class="btn primary" id="btn-create-ok">만들기</button>
     <button class="btn" id="btn-create-cancel">취소</button>
@@ -192,10 +207,11 @@
 
 <section id="screen-room" class="screen">
   <h2 id="room-name">방</h2>
+  <p class="setting" id="room-setting"></p>
   <p id="room-note"></p>
   <div class="rank" id="room-members"></div>
   <div class="btns">
-    <button class="btn primary" id="btn-room-start" disabled>게임 시작<span class="sub">다음 단계에서 활성화됩니다</span></button>
+    <button class="btn primary" id="btn-room-start">게임 시작</button>
     <button class="btn" id="btn-room-leave">방 나가기</button>
   </div>
 </section>
@@ -1207,7 +1223,15 @@ function onNet(m) {
   if (m.t === 'welcome') myId = m.id;
   else if (m.t === 'room_list') renderRooms(m.rooms);
   else if (m.t === 'joined') { myRoom = m.room; iamHost = m.you === 'host'; showScreen('room'); updateRoomPanel(m.room, null); }
-  else if (m.t === 'room_update') { myRoom = m.room; updateRoomPanel(m.room, m.members); }
+  else if (m.t === 'room_update') {
+    myRoom = m.room;
+    iamHost = m.room.host === myId;
+    updateRoomPanel(m.room, m.members);
+  }
+  else if (m.t === 'host_changed') {
+    iamHost = m.host === myId;
+    toast(iamHost ? '내가 방장이 되었습니다' : m.name + ' 님이 방장이 되었습니다');
+  }
   else if (m.t === 'peer') toast(m.name + (m.event === 'join' ? ' 님이 들어왔습니다' : ' 님이 나갔습니다'));
   else if (m.t === 'left') myRoom = null;
   else if (m.t === 'error') toast(m.msg);
@@ -1238,11 +1262,13 @@ function renderRooms(list) {
     slot.face.material.opacity = r.state === 'wait' ? .5 : .22;
     slot.glow.color.setHex(color);
     slot.glow.intensity = r.state === 'wait' ? 9 : 4;
-    slot.label.draw(r.name, r.players + ' / ' + r.max + ' · ' + STATE_TEXT[r.state],
-                    '#' + color.toString(16).padStart(6, '0'));
+    slot.label.draw(r.name,
+      r.players + ' / ' + r.max + ' · ' + minText(r.secs) + ' · ' + STATE_TEXT[r.state],
+      '#' + color.toString(16).padStart(6, '0'));
     spots.push({ kind: 'room', pos: new THREE.Vector3(slot.x, 0, slot.z),
                  text: r.state === 'play' ? '가득 참' : '입장',
-                 meta: r.name + ' · ' + r.players + '/' + r.max, room: r });
+                 meta: r.name + ' · ' + r.players + '/' + r.max + ' · ' + minText(r.secs) +
+                       (r.win ? ' · ' + r.win + '%' : ''), room: r });
   });
   lob.spots = spots;
   if (netOk) setNet(list.length ? '온라인 연결됨 · 방 ' + list.length + '개' : '온라인 연결됨 · 열린 방 없음', 'ok');
@@ -1250,9 +1276,10 @@ function renderRooms(list) {
 
 function updateRoomPanel(room, members) {
   document.getElementById('room-name').textContent = room.name;
+  settingEl.textContent = settingText(room);
   document.getElementById('room-note').textContent = room.players >= room.max
-    ? '두 명이 모였습니다 — 게임 연결은 다음 단계입니다'
-    : '상대를 기다리는 중… (' + room.players + ' / ' + room.max + ')';
+    ? '정원이 찼습니다 (' + room.players + ' / ' + room.max + ')'
+    : '참가자를 기다리는 중… (' + room.players + ' / ' + room.max + ')';
   startBtn.style.display = iamHost ? '' : 'none';
   if (!members) return;
   const box = document.getElementById('room-members');
@@ -1274,6 +1301,39 @@ function updateRoomPanel(room, members) {
 
 const createField = document.getElementById('create-name');
 const startBtn = document.getElementById('btn-room-start');
+const settingEl = document.getElementById('room-setting');
+
+// 선택지 묶음 하나를 만든다. 값은 state.value 에 남는다.
+function buildSeg(el, items, def) {
+  const state = { value: def };
+  items.forEach((it) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = it.label;
+    if (it.value === def) b.classList.add('on');
+    b.addEventListener('click', () => {
+      state.value = it.value;
+      for (const c of el.children) c.classList.toggle('on', c === b);
+    });
+    el.appendChild(b);
+  });
+  return state;
+}
+
+const optMax = buildSeg(document.getElementById('opt-max'),
+  [{ label: '2명', value: 2 }, { label: '3명', value: 3 }, { label: '4명', value: 4 }], 2);
+const optSecs = buildSeg(document.getElementById('opt-secs'),
+  [{ label: '1분', value: 60 }, { label: '2분', value: 120 },
+   { label: '3분', value: 180 }, { label: '5분', value: 300 }], 180);
+const optWin = buildSeg(document.getElementById('opt-win'),
+  [{ label: '60%', value: 60 }, { label: '없음', value: 0 }], 60);
+
+const minText = (secs) => (secs / 60) + '분';
+
+function settingText(room) {
+  return '인원 ' + room.max + '명 · 제한 ' + minText(room.secs) +
+         ' · 승리 ' + (room.win ? room.win + '%' : '시간 종료까지');
+}
 
 function openCreateDialog() {
   if (!netOk) { toast('서버에 연결되어 있지 않습니다'); return; }
@@ -1284,7 +1344,8 @@ function openCreateDialog() {
 
 function submitCreate() {
   const name = createField.value.trim().slice(0, 20) || (myName() + '의 방');
-  send({ t: 'create_room', name });
+  send({ t: 'create_room', name, max: optMax.value, secs: optSecs.value,
+         win: optWin.value === 60 ? 60 : null });
 }
 
 function leaveRoom() {
@@ -1325,6 +1386,11 @@ document.getElementById('btn-bot').addEventListener('click', () => enter3d('game
 document.getElementById('btn-online').addEventListener('click', () => { netConnect(); enter3d('lobby'); });
 document.getElementById('btn-room-leave').addEventListener('click', leaveRoom);
 document.getElementById('btn-create-ok').addEventListener('click', submitCreate);
+startBtn.addEventListener('click', () => {
+  if (!myRoom) return;
+  if (myRoom.players < myRoom.max) { toast('아직 정원이 차지 않았습니다 (' + myRoom.players + '/' + myRoom.max + ')'); return; }
+  toast('게임 동기화는 다음 단계입니다');
+});
 document.getElementById('btn-create-cancel').addEventListener('click', () => enter3d('lobby'));
 createField.addEventListener('keydown', (e) => {
   e.stopPropagation();                        // 입력 중 키가 게임 조작으로 새지 않게
