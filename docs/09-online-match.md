@@ -155,7 +155,7 @@ cp index.html ~/.openclaw-mir/workspace/land-grab/index.html
 | **wss://valuetopic.com/game/ws** | 경기 중계 동작 확인 |
 
 ## 새 커밋 해시
-- `__COMMIT__`
+- `3ff16c5`
 
 ## 알려진 버그 · 미완
 1. **보간 없음.** 상대 캐릭터가 18Hz로 툭툭 움직인다. 지시대로 정확성을 택한 결과다.
