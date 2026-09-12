@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>땅따먹기 — 3D 평지 · 1인칭 이동</title>
+<style>
+  :root{ --fg:#e8eaed; --dim:#9aa0a6; --key:#2b3038; }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;overflow:hidden;background:#0b0d11;color:var(--fg);
+       font-family:Pretendard,-apple-system,"Segoe UI",system-ui,sans-serif;
+       -webkit-user-select:none;user-select:none}
+  canvas{display:block}
+
+  /* HUD */
+  #hud{position:fixed;left:0;right:0;bottom:0;padding:12px 16px;
+       display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;
+       font-size:12px;color:var(--dim);pointer-events:none;
+       background:linear-gradient(transparent,rgba(0,0,0,.55))}
+  #hud b{color:var(--fg);font-weight:600;background:var(--key);
+         border-radius:4px;padding:1px 6px;margin:0 1px}
+  #stat{margin-left:auto;font-variant-numeric:tabular-nums;white-space:nowrap}
+  #stat .run{color:#7fd18b}
+
+  /* 조준점 */
+  #cross{position:fixed;left:50%;top:50%;width:14px;height:14px;
+         margin:-7px 0 0 -7px;pointer-events:none;opacity:.75}
+  #cross::before,#cross::after{content:"";position:absolute;background:#fff}
+  #cross::before{left:6px;top:0;width:2px;height:14px}
+  #cross::after{top:6px;left:0;height:2px;width:14px}
+
+  /* 시작 오버레이 */
+  #overlay{position:fixed;inset:0;display:flex;flex-direction:column;
+           align-items:center;justify-content:center;gap:14px;text-align:center;
+           padding:24px;background:rgba(8,10,14,.82);cursor:pointer;z-index:10}
+  #overlay.hide{display:none}
+  #overlay h1{margin:0;font-size:clamp(26px,6vw,40px);letter-spacing:-.02em}
+  #overlay p{margin:0;color:var(--dim);font-size:14px;line-height:1.8}
+  #overlay .cta{margin-top:6px;font-size:15px;color:var(--fg)}
+  #overlay .esc{font-size:12px}
+
+  #err{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+       padding:24px;text-align:center;background:#0b0d11;z-index:20;font-size:14px;line-height:1.8}
+</style>
+</head>
+<body>
+
+<div id="cross"></div>
+
+<div id="hud">
+  <span><b>WASD</b> 이동</span>
+  <span><b>Shift</b> 달리기</span>
+  <span><b>Space</b> 점프</span>
+  <span><b>마우스</b> 시점</span>
+  <span><b>ESC</b> 잠금 해제</span>
+  <span id="stat"></span>
+</div>
+
+<div id="overlay">
+  <h1>땅따먹기</h1>
+  <p>01단계 — 평지와 1인칭 이동만 있습니다<br>궤적·점령·봇은 다음 단계입니다</p>
+  <p class="cta">클릭하여 시작</p>
+  <p class="esc">시작하면 마우스가 화면에 잠깁니다 · ESC로 해제</p>
+</div>
+
+<div id="err"></div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.js" } }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+// ── 설정값 ───────────────────────────────────────────────
+const WORLD  = 400;    // 평지 한 변 (m)
+const EYE    = 1.7;    // 눈높이 (m)
+const WALK   = 6.0;    // 걷기 속도 (m/s)
+const RUN    = 11.0;   // 달리기 속도 (m/s)
+const ACCEL  = 14.0;   // 가감속 (m/s^2)
+const GRAV   = 25.0;   // 중력 (m/s^2)
+const JUMP   = 8.0;    // 점프 초기 속도 (m/s)
+const SENS   = 0.0022; // 마우스 감도 (rad/px)
+const MAXDT  = 0.05;   // 한 프레임 최대 delta (탭 복귀 시 순간이동 방지)
+
+// ── 렌더러 · 씬 · 카메라 ─────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8fb6d9);
+scene.fog = new THREE.Fog(0x8fb6d9, 60, WORLD * 0.75);
+
+const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 1200);
+camera.rotation.order = 'YXZ';   // yaw(Y) → pitch(X) 순서라야 롤이 안 생긴다
+camera.position.set(0, EYE, 0);
+
+// ── 조명 ─────────────────────────────────────────────────
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+scene.add(new THREE.HemisphereLight(0xbcd8f5, 0x4b6b4a, 0.45));
+
+const sun = new THREE.DirectionalLight(0xfff3e0, 1.0);
+sun.position.set(60, 90, 40);
+scene.add(sun);
+
+// ── 바닥: 체커 텍스처 평지 + 그리드 ──────────────────────
+function checkerTexture() {
+  const S = 128, c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d');
+  g.fillStyle = '#6f8f5e'; g.fillRect(0, 0, S, S);
+  g.fillStyle = '#658453'; g.fillRect(0, 0, S / 2, S / 2); g.fillRect(S / 2, S / 2, S / 2, S / 2);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(WORLD / 4, WORLD / 4);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return t;
+}
+
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(WORLD, WORLD),
+  new THREE.MeshStandardMaterial({ map: checkerTexture(), roughness: 1, metalness: 0 })
+);
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+
+const grid = new THREE.GridHelper(WORLD, WORLD / 4, 0xffffff, 0xffffff);
+grid.material.transparent = true;
+grid.material.opacity = 0.12;
+grid.position.y = 0.01;   // z-파이팅 방지
+scene.add(grid);
+
+// 방향 기준점 — 사방 모서리 기둥 (없으면 평지에서 방향감이 사라진다)
+const pillarGeo = new THREE.BoxGeometry(3, 14, 3);
+const pillarMat = [0xe05a5a, 0x5ab0e0, 0xe0c85a, 0x7fd18b].map(
+  (c) => new THREE.MeshStandardMaterial({ color: c, roughness: .8 })
+);
+const H = WORLD / 2 - 12;
+[[-H, -H], [H, -H], [H, H], [-H, H]].forEach(([x, z], i) => {
+  const p = new THREE.Mesh(pillarGeo, pillarMat[i]);
+  p.position.set(x, 7, z);
+  scene.add(p);
+});
+
+// ── 입력 ─────────────────────────────────────────────────
+const keys = Object.create(null);
+let yaw = 0, pitch = 0;
+let locked = false;
+
+addEventListener('keydown', (e) => {
+  keys[e.code] = true;
+  if (e.code === 'Space') e.preventDefault();   // 페이지 스크롤 방지
+});
+addEventListener('keyup', (e) => { keys[e.code] = false; });
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
+
+const overlay = document.getElementById('overlay');
+overlay.addEventListener('click', () => renderer.domElement.requestPointerLock());
+
+document.addEventListener('pointerlockchange', () => {
+  locked = document.pointerLockElement === renderer.domElement;
+  overlay.classList.toggle('hide', locked);
+  if (!locked) for (const k in keys) keys[k] = false;   // 해제 순간 키 고착 방지
+});
+
+document.addEventListener('mousemove', (e) => {
+  if (!locked) return;
+  yaw   -= e.movementX * SENS;
+  pitch -= e.movementY * SENS;
+  const LIM = Math.PI / 2 - 0.001;
+  pitch = Math.max(-LIM, Math.min(LIM, pitch));
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ── 플레이어 상태 ────────────────────────────────────────
+const pos = new THREE.Vector3(0, EYE, 0);
+const vel = new THREE.Vector3();   // x,z = 수평 실제속도 / y = 수직속도
+let onGround = true;
+
+const wish = new THREE.Vector3();  // 이번 프레임 목표 수평 속도
+const LIMIT = WORLD / 2 - 1;
+
+function update(dt) {
+  // 카메라 기준 방향 (수평면)
+  const sy = Math.sin(yaw), cy = Math.cos(yaw);
+  const fx = -sy, fz = -cy;   // 전방
+  const rx =  cy, rz = -sy;   // 우측
+
+  let ix = 0, iz = 0;
+  if (keys.KeyW) { ix += fx; iz += fz; }
+  if (keys.KeyS) { ix -= fx; iz -= fz; }
+  if (keys.KeyD) { ix += rx; iz += rz; }
+  if (keys.KeyA) { ix -= rx; iz -= rz; }
+
+  const len = Math.hypot(ix, iz);
+  const running = !!(keys.ShiftLeft || keys.ShiftRight);
+  const speed = running ? RUN : WALK;
+  wish.set(len > 0 ? (ix / len) * speed : 0, 0, len > 0 ? (iz / len) * speed : 0);
+
+  // 목표 속도로 부드럽게 수렴 (공중에서는 절반만 먹힘)
+  const a = ACCEL * dt * (onGround ? 1 : 0.5);
+  vel.x += (wish.x - vel.x) * Math.min(1, a);
+  vel.z += (wish.z - vel.z) * Math.min(1, a);
+
+  // 점프 · 중력
+  if (keys.Space && onGround) { vel.y = JUMP; onGround = false; }
+  vel.y -= GRAV * dt;
+
+  pos.x += vel.x * dt;
+  pos.z += vel.z * dt;
+  pos.y += vel.y * dt;
+
+  // 바닥 착지
+  if (pos.y <= EYE) { pos.y = EYE; vel.y = 0; onGround = true; }
+
+  // 평지 밖으로 못 나가게
+  pos.x = Math.max(-LIMIT, Math.min(LIMIT, pos.x));
+  pos.z = Math.max(-LIMIT, Math.min(LIMIT, pos.z));
+
+  camera.position.copy(pos);
+  camera.rotation.set(pitch, yaw, 0);
+
+  return { running, speed: Math.hypot(vel.x, vel.z) };
+}
+
+// ── HUD ──────────────────────────────────────────────────
+const stat = document.getElementById('stat');
+let hudAt = 0, frames = 0, fpsAt = 0, fps = 0;
+
+function drawHud(now, s) {
+  frames++;
+  if (now - fpsAt >= 500) { fps = Math.round((frames * 1000) / (now - fpsAt)); frames = 0; fpsAt = now; }
+  if (now - hudAt < 100) return;
+  hudAt = now;
+  stat.innerHTML =
+    'x ' + pos.x.toFixed(1) + ' · z ' + pos.z.toFixed(1) + ' · y ' + (pos.y - EYE).toFixed(1) +
+    ' · ' + s.speed.toFixed(1) + ' m/s' +
+    (s.running ? ' <span class="run">RUN</span>' : '') +
+    ' · ' + fps + ' fps';
+}
+
+// ── 루프 ─────────────────────────────────────────────────
+let prev = performance.now();
+
+function loop(now) {
+  requestAnimationFrame(loop);
+  const dt = Math.min((now - prev) / 1000, MAXDT);
+  prev = now;
+  const s = locked ? update(dt) : { running: false, speed: 0 };
+  drawHud(now, s);
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(loop);
+
+// 로딩 실패를 조용히 넘기지 않는다
+addEventListener('error', (e) => {
+  const box = document.getElementById('err');
+  box.style.display = 'flex';
+  box.textContent = '로딩 오류: ' + (e.message || '알 수 없음') + ' — 새로고침하거나 네트워크를 확인하세요.';
+});
+</script>
+</body>
+</html>
