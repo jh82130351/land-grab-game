@@ -104,7 +104,7 @@ git add . && git commit && git push origin main
 `Settings → Pages → Deploy from a branch → main / (root)` 를 정현님이 눌러주셔야 한다.
 
 ## 새 커밋 해시
-- `__COMMIT__`
+- `adf64c1`
 
 ## 감독 확인 요청 사항 / 남은 이슈
 1. **로비 크기·조명 감각 컨펌.** 40m는 3개 방 기준으로 넉넉한 편이라, 스폰에서 문까지 25m를 걷는다.
