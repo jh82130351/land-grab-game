@@ -2,8 +2,27 @@
 """땅따먹기 온라인 — 방 관리 + 중계 WebSocket 서버 (포트 5002).
 
 역할은 둘뿐이다.
-  1) 방 관리 — 생성 / 목록 / 입장 / 퇴장 (정원 2)
+  1) 방 관리 — 생성 / 목록 / 입장 / 퇴장 / 방장 위임 / 빈 방 정리 (정원 2)
   2) 중계    — 같은 방의 상대에게 메시지를 그대로 전달
+
+프로토콜 (모두 JSON, 최상위 키 t)
+  클라 → 서버
+    {t:'hello', name}                 접속 인사. 닉네임 등록
+    {t:'list_rooms'}                  방 목록 요청
+    {t:'create_room', name}           방 생성 (생성자가 방장)
+    {t:'join', room}                  방 입장
+    {t:'leave'}                       방 퇴장
+    {t:'relay', data}                 같은 방 상대에게 그대로 전달 (게임 상태 자리)
+    {t:'ping', ts}                    왕복 지연 측정
+  서버 → 클라
+    {t:'welcome', id, name}           내 접속 id
+    {t:'room_list', rooms:[...]}      방 목록 (로비에 있는 사람에게만)
+    {t:'joined', room, you}           입장 성공. you = 'host' | 'guest'
+    {t:'room_update', room, members}  방 인원 변화 (같은 방 전원에게)
+    {t:'peer', event, id, name}       상대 입장/퇴장 알림. event = 'join' | 'leave'
+    {t:'left'}                        내 퇴장 확인
+    {t:'error', msg}                  거절 사유
+    {t:'pong', ts}
 
 게임 계산은 하지 않는다. 방장 클라이언트가 계산하고(host-authoritative)
 서버는 그 결과를 상대에게 넘기기만 한다. (마일스톤 C에서 사용)
@@ -97,13 +116,13 @@ def room_list():
 
 async def push_room_list():
     """로비에 있는 사람들에게만 목록을 보낸다."""
-    msg = {'t': 'rooms', 'rooms': room_list()}
+    msg = {'t': 'room_list', 'rooms': room_list()}
     await asyncio.gather(*[c.send(msg) for c in list(clients.values()) if c.in_lobby],
                          return_exceptions=True)
 
 
 async def push_room_state(room):
-    msg = {'t': 'room', 'room': room.info(), 'members': room.members_info()}
+    msg = {'t': 'room_update', 'room': room.info(), 'members': room.members_info()}
     await asyncio.gather(*[clients[cid].send(msg) for cid in room.members if cid in clients],
                          return_exceptions=True)
 
@@ -150,12 +169,12 @@ async def handle(client, msg):
     if t == 'hello':
         client.name = clean_name(msg.get('name'), '플레이어')
         await client.send({'t': 'welcome', 'id': client.id, 'name': client.name})
-        await client.send({'t': 'rooms', 'rooms': room_list()})
+        await client.send({'t': 'room_list', 'rooms': room_list()})
 
-    elif t == 'list':
-        await client.send({'t': 'rooms', 'rooms': room_list()})
+    elif t == 'list_rooms':
+        await client.send({'t': 'room_list', 'rooms': room_list()})
 
-    elif t == 'create':
+    elif t == 'create_room':
         if client.room:
             await leave_room(client)
         if len(rooms) >= ROOM_LIMIT:
@@ -177,7 +196,7 @@ async def handle(client, msg):
         room = rooms.get(rid)
         if not room:
             await client.send({'t': 'error', 'msg': '없는 방입니다.'})
-            await client.send({'t': 'rooms', 'rooms': room_list()})
+            await client.send({'t': 'room_list', 'rooms': room_list()})
             return
         if len(room.members) >= ROOM_MAX:
             await client.send({'t': 'error', 'msg': '방이 가득 찼습니다.'})
@@ -200,7 +219,7 @@ async def handle(client, msg):
     elif t == 'leave':
         await leave_room(client)
         await client.send({'t': 'left'})
-        await client.send({'t': 'rooms', 'rooms': room_list()})
+        await client.send({'t': 'room_list', 'rooms': room_list()})
 
     elif t == 'relay':
         # 마일스톤 C용 — 같은 방의 상대에게 그대로 넘긴다. 서버는 내용을 보지 않는다.
