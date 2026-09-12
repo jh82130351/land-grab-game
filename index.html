@@ -15,7 +15,7 @@
   canvas{display:block}
   button{font:inherit;color:inherit;cursor:pointer}
 
-  /* ── 화면 공통 ───────────────────────────────── */
+  /* ── 전면 화면 (menu · pause) ─────────────────── */
   .screen{position:fixed;inset:0;z-index:10;display:none;
           flex-direction:column;align-items:center;justify-content:center;
           gap:18px;padding:24px;text-align:center;
@@ -32,33 +32,10 @@
   .btn:active{transform:none}
   .btn.primary{background:#1d2a20;border-color:#33553a}
   .btn.primary:hover{background:#243425}
-  .btn.ghost{min-width:0;padding:10px 16px;font-size:13px;font-weight:500;color:var(--dim)}
-  .btn.ghost:hover{color:var(--fg)}
   .btn .sub{display:block;margin-top:3px;font-size:12px;font-weight:400;color:var(--dim)}
   .btns{display:flex;flex-direction:column;gap:12px;margin-top:8px}
 
-  /* ── 로비 ────────────────────────────────────── */
-  #screen-lobby{justify-content:flex-start;padding-top:min(9vh,80px)}
-  .lobby{width:100%;max-width:520px;display:flex;flex-direction:column;gap:14px;text-align:left}
-  .lobby-top{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
-  .notice{padding:11px 14px;border-radius:8px;font-size:13px;line-height:1.6;
-          border:1px solid #4a3a22;background:#231a10;color:#e6c88a}
-  .rooms{display:flex;flex-direction:column;gap:8px;
-         max-height:46vh;overflow-y:auto;padding-right:2px}
-  .room{display:flex;align-items:center;gap:12px;width:100%;text-align:left;
-        padding:13px 15px;border-radius:9px;border:1px solid var(--line);
-        background:#12151b;transition:.12s}
-  .room:hover{background:#181c24;border-color:#39414e}
-  .room .nm{flex:1;font-size:14px;font-weight:600}
-  .room .ppl{font-size:13px;color:var(--dim);font-variant-numeric:tabular-nums}
-  .room .st{font-size:11px;font-weight:600;padding:3px 9px;border-radius:99px;
-            border:1px solid var(--line);color:var(--dim)}
-  .room .st.wait{color:var(--accent);border-color:#33553a;background:#16231a}
-  .rooms-empty{padding:26px 14px;text-align:center;font-size:13px;color:var(--dim);
-               border:1px dashed var(--line);border-radius:9px}
-  .lobby-act{display:flex;gap:10px;justify-content:space-between;align-items:center}
-
-  /* ── 게임 HUD ────────────────────────────────── */
+  /* ── 3D 화면 공용 HUD ─────────────────────────── */
   #hud{position:fixed;left:0;right:0;bottom:0;padding:12px 16px;z-index:5;
        display:none;flex-wrap:wrap;gap:8px 18px;align-items:center;
        font-size:12px;color:var(--dim);pointer-events:none;
@@ -66,6 +43,9 @@
   #hud.on{display:flex}
   #hud b{color:var(--fg);font-weight:600;background:var(--key);
          border-radius:4px;padding:1px 6px;margin:0 1px}
+  #hud .only-lobby,#hud .only-game{display:none}
+  #hud.lobby .only-lobby{display:inline}
+  #hud.game .only-game{display:inline}
   #stat{margin-left:auto;font-variant-numeric:tabular-nums;white-space:nowrap}
   #stat .run{color:var(--accent)}
 
@@ -75,6 +55,26 @@
   #cross::before,#cross::after{content:"";position:absolute;background:#fff}
   #cross::before{left:6px;top:0;width:2px;height:14px}
   #cross::after{top:6px;left:0;height:2px;width:14px}
+
+  /* ── 로비 상단 안내 띠 ─────────────────────────── */
+  #lobbybar{position:fixed;left:50%;top:18px;transform:translateX(-50%);z-index:5;
+            display:none;gap:14px;align-items:center;white-space:nowrap;
+            padding:9px 16px;border-radius:99px;font-size:12.5px;
+            border:1px solid #4a3a22;background:rgba(35,26,16,.92);color:#e6c88a;
+            pointer-events:none}
+  #lobbybar.on{display:flex}
+  #lobbybar .sep{width:1px;height:13px;background:#4a3a22}
+  #lobbybar .hint{color:var(--dim)}
+  #lobbybar .hint b{color:var(--fg);background:var(--key);border-radius:4px;padding:1px 6px}
+
+  /* ── 근접 상호작용 프롬프트 ───────────────────── */
+  #prompt{position:fixed;left:50%;top:calc(50% + 42px);transform:translateX(-50%);z-index:6;
+          display:none;align-items:center;gap:10px;white-space:nowrap;
+          padding:10px 16px;border-radius:9px;font-size:14px;
+          border:1px solid var(--line);background:var(--panel);pointer-events:none}
+  #prompt.on{display:flex}
+  #prompt .k{font-weight:700;background:var(--key);border-radius:4px;padding:2px 8px;font-size:13px}
+  #prompt .meta{color:var(--dim);font-size:12.5px}
 
   /* ── 토스트 ──────────────────────────────────── */
   #toast{position:fixed;left:50%;bottom:76px;transform:translate(-50%,10px);z-index:30;
@@ -96,9 +96,19 @@
   <span><b>Shift</b> 달리기</span>
   <span><b>Space</b> 점프</span>
   <span><b>마우스</b> 시점</span>
-  <span><b>ESC</b> 일시정지</span>
+  <span class="only-lobby"><b>E</b> 상호작용</span>
+  <span class="only-lobby"><b>ESC</b> 메뉴로</span>
+  <span class="only-game"><b>ESC</b> 일시정지</span>
   <span id="stat"></span>
 </div>
+
+<div id="lobbybar">
+  <span>온라인 서버 미연결 — 08단계 예정</span>
+  <span class="sep"></span>
+  <span class="hint">문 앞으로 걸어가 <b>E</b> · 나가려면 <b>ESC</b></span>
+</div>
+
+<div id="prompt"><span class="k">E</span><span id="prompt-text"></span><span class="meta" id="prompt-meta"></span></div>
 
 <!-- 시작화면 -->
 <section id="screen-menu" class="screen on">
@@ -106,27 +116,11 @@
   <p>3D 영역 점령 게임 · 개발 중</p>
   <div class="btns">
     <button class="btn primary" id="btn-bot">봇과 플레이<span class="sub">혼자 연습 · 바로 시작</span></button>
-    <button class="btn" id="btn-online">온라인으로 플레이<span class="sub">방 목록에서 상대 찾기</span></button>
+    <button class="btn" id="btn-online">온라인으로 플레이<span class="sub">로비를 걸어다니며 방 찾기</span></button>
   </div>
 </section>
 
-<!-- 온라인 로비 -->
-<section id="screen-lobby" class="screen">
-  <div class="lobby">
-    <div class="lobby-top">
-      <h2>온라인 로비</h2>
-      <button class="btn ghost" id="btn-refresh">새로고침</button>
-    </div>
-    <div class="notice">온라인 서버 미연결 — 08단계 예정입니다. 아래 목록은 화면 확인용 예시입니다.</div>
-    <div class="rooms" id="rooms"></div>
-    <div class="lobby-act">
-      <button class="btn ghost" id="btn-back">← 뒤로</button>
-      <button class="btn" id="btn-create" style="min-width:150px">방 만들기</button>
-    </div>
-  </div>
-</section>
-
-<!-- 일시정지 (게임 중 ESC) -->
+<!-- 일시정지 -->
 <section id="screen-pause" class="screen">
   <h2>일시정지</h2>
   <p>마우스 잠금이 해제되었습니다</p>
@@ -147,7 +141,6 @@
 import * as THREE from 'three';
 
 // ── 설정값 ───────────────────────────────────────────────
-const WORLD  = 400;    // 평지 한 변 (m)
 const EYE    = 1.7;    // 눈높이 (m)
 const WALK   = 6.0;    // 걷기 속도 (m/s)
 const RUN    = 11.0;   // 달리기 속도 (m/s)
@@ -157,96 +150,314 @@ const JUMP   = 8.0;    // 점프 초기 속도 (m/s)
 const SENS   = 0.0022; // 마우스 감도 (rad/px)
 const MAXDT  = 0.05;   // 한 프레임 최대 delta (탭 복귀 시 순간이동 방지)
 
-// ── 렌더러 · 씬 · 카메라 ─────────────────────────────────
+const FIELD  = 400;    // 게임 평지 한 변 (m)
+const LOBBY  = 40;     // 로비 한 변 (m)
+const REACH  = 3.2;    // 상호작용 인식 거리 (m)
+
+// ── 렌더러 · 카메라 ──────────────────────────────────────
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 document.body.appendChild(renderer.domElement);
 
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x8fb6d9);
-scene.fog = new THREE.Fog(0x8fb6d9, 60, WORLD * 0.75);
-
 const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 1200);
 camera.rotation.order = 'YXZ';   // yaw(Y) → pitch(X) 순서라야 롤이 안 생긴다
 camera.position.set(0, EYE, 0);
 
-// ── 조명 ─────────────────────────────────────────────────
-scene.add(new THREE.AmbientLight(0xffffff, 0.55));
-scene.add(new THREE.HemisphereLight(0xbcd8f5, 0x4b6b4a, 0.45));
+const MAXANISO = renderer.capabilities.getMaxAnisotropy();
 
-const sun = new THREE.DirectionalLight(0xfff3e0, 1.0);
-sun.position.set(60, 90, 40);
-scene.add(sun);
-
-// ── 바닥: 체커 텍스처 평지 + 그리드 ──────────────────────
-function checkerTexture() {
+// ── 공용 헬퍼 ────────────────────────────────────────────
+function checkerTexture(a, b, tile, span) {
   const S = 128, c = document.createElement('canvas');
   c.width = c.height = S;
   const g = c.getContext('2d');
-  g.fillStyle = '#6f8f5e'; g.fillRect(0, 0, S, S);
-  g.fillStyle = '#658453'; g.fillRect(0, 0, S / 2, S / 2); g.fillRect(S / 2, S / 2, S / 2, S / 2);
+  g.fillStyle = a; g.fillRect(0, 0, S, S);
+  g.fillStyle = b; g.fillRect(0, 0, S / 2, S / 2); g.fillRect(S / 2, S / 2, S / 2, S / 2);
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.repeat.set(WORLD / 4, WORLD / 4);
+  t.repeat.set(span / tile, span / tile);
   t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  t.anisotropy = MAXANISO;
   return t;
 }
 
-const ground = new THREE.Mesh(
-  new THREE.PlaneGeometry(WORLD, WORLD),
-  new THREE.MeshStandardMaterial({ map: checkerTexture(), roughness: 1, metalness: 0 })
-);
-ground.rotation.x = -Math.PI / 2;
-scene.add(ground);
+function roundRect(g, x, y, w, h, r) {
+  g.beginPath();
+  g.moveTo(x + r, y);
+  g.arcTo(x + w, y, x + w, y + h, r);
+  g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r);
+  g.arcTo(x, y, x + w, y, r);
+  g.closePath();
+}
 
-const grid = new THREE.GridHelper(WORLD, WORLD / 4, 0xffffff, 0xffffff);
-grid.material.transparent = true;
-grid.material.opacity = 0.12;
-grid.position.y = 0.01;   // z-파이팅 방지
-scene.add(grid);
+// 3D 공간에 떠 있는 라벨 (캔버스 → Sprite)
+function makeLabel(title, sub, accent) {
+  const W = 512, H = 168, c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  g.fillStyle = 'rgba(12,15,20,.88)';
+  roundRect(g, 6, 6, W - 12, H - 12, 20); g.fill();
+  g.strokeStyle = accent; g.lineWidth = 4; g.stroke();
+  g.textAlign = 'center';
+  g.fillStyle = '#ffffff';
+  g.font = 'bold 56px system-ui, sans-serif';
+  g.fillText(title, W / 2, 76);
+  g.fillStyle = '#9aa0a6';
+  g.font = '36px system-ui, sans-serif';
+  g.fillText(sub, W / 2, 128);
 
-// 방향 기준점 — 사방 모서리 기둥 (없으면 평지에서 방향감이 사라진다)
-const pillarGeo = new THREE.BoxGeometry(3, 14, 3);
-const pillarMat = [0xe05a5a, 0x5ab0e0, 0xe0c85a, 0x7fd18b].map(
-  (c) => new THREE.MeshStandardMaterial({ color: c, roughness: .8 })
-);
-const H = WORLD / 2 - 12;
-[[-H, -H], [H, -H], [H, H], [-H, H]].forEach(([x, z], i) => {
-  const p = new THREE.Mesh(pillarGeo, pillarMat[i]);
-  p.position.set(x, 7, z);
-  scene.add(p);
-});
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthWrite: false }));
+  s.scale.set(3.6, 1.18, 1);
+  return s;
+}
+
+// ── 월드 1: 게임 평지 ────────────────────────────────────
+function buildField() {
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x8fb6d9);
+  scene.fog = new THREE.Fog(0x8fb6d9, 60, FIELD * 0.75);
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+  scene.add(new THREE.HemisphereLight(0xbcd8f5, 0x4b6b4a, 0.45));
+  const sun = new THREE.DirectionalLight(0xfff3e0, 1.0);
+  sun.position.set(60, 90, 40);
+  scene.add(sun);
+
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(FIELD, FIELD),
+    new THREE.MeshStandardMaterial({ map: checkerTexture('#6f8f5e', '#658453', 4, FIELD), roughness: 1 })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  scene.add(ground);
+
+  const grid = new THREE.GridHelper(FIELD, FIELD / 4, 0xffffff, 0xffffff);
+  grid.material.transparent = true;
+  grid.material.opacity = 0.12;
+  grid.position.y = 0.01;   // z-파이팅 방지
+  scene.add(grid);
+
+  // 방향 기준점 — 사방 모서리 기둥 (없으면 평지에서 방향감이 사라진다)
+  const geo = new THREE.BoxGeometry(3, 14, 3);
+  const mats = [0xe05a5a, 0x5ab0e0, 0xe0c85a, 0x7fd18b].map(
+    (c) => new THREE.MeshStandardMaterial({ color: c, roughness: .8 })
+  );
+  const H = FIELD / 2 - 12;
+  [[-H, -H], [H, -H], [H, H], [-H, H]].forEach(([x, z], i) => {
+    const p = new THREE.Mesh(geo, mats[i]);
+    p.position.set(x, 7, z);
+    scene.add(p);
+  });
+
+  return {
+    scene,
+    limit: FIELD / 2 - 1,
+    spawn: new THREE.Vector3(0, EYE, 0),
+    yaw: 0,
+    spots: [],
+  };
+}
+
+// ── 월드 2: 온라인 로비 (실내 광장) ──────────────────────
+// 방 데이터. 08단계에서 서버 응답이 이 배열로 그대로 들어온다.
+const ROOMS = [
+  { id: 'r1', name: '연습방',   players: 1, max: 2, state: 'wait' },
+  { id: 'r2', name: '빠른대전', players: 2, max: 2, state: 'play' },
+  { id: 'r3', name: '초보 환영', players: 0, max: 2, state: 'wait' },
+];
+
+const STATE_TEXT = { wait: '대기', play: '진행' };
+const STATE_COLOR = { wait: 0x7fd18b, play: 0xe0a55a };
+
+function buildLobby() {
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x14171d);
+  scene.fog = new THREE.Fog(0x14171d, 18, 48);
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+  scene.add(new THREE.HemisphereLight(0x9fb4d8, 0x30261c, 0.55));
+  const key = new THREE.DirectionalLight(0xfff0d8, 0.7);
+  key.position.set(10, 22, 8);
+  scene.add(key);
+  // 천장등 — 없으면 안쪽 벽이 새까매서 공간이 안 읽힌다
+  const lamp = new THREE.PointLight(0xfff3e0, 60, 46, 2);
+  lamp.position.set(0, 6.2, 0);
+  scene.add(lamp);
+
+  // 바닥 — 게임 평지와 구분되도록 실내 타일
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(LOBBY, LOBBY),
+    new THREE.MeshStandardMaterial({ map: checkerTexture('#3a3f49', '#343943', 2, LOBBY), roughness: .85 })
+  );
+  floor.rotation.x = -Math.PI / 2;
+  scene.add(floor);
+
+  // 벽 4면 — 경계이자 실내 느낌
+  const WALL_H = 7, T = 0.6, half = LOBBY / 2;
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0x242832, roughness: .95 });
+  const wallGeo = new THREE.BoxGeometry(LOBBY + T * 2, WALL_H, T);
+  [[0, -half, 0], [0, half, 0], [-half, 0, Math.PI / 2], [half, 0, Math.PI / 2]].forEach(([x, z, ry]) => {
+    const w = new THREE.Mesh(wallGeo, wallMat);
+    w.position.set(x, WALL_H / 2, z);
+    w.rotation.y = ry;
+    scene.add(w);
+  });
+
+  // 천장 — 어둡게 덮어 실내감을 준다
+  const ceil = new THREE.Mesh(
+    new THREE.PlaneGeometry(LOBBY, LOBBY),
+    new THREE.MeshStandardMaterial({ color: 0x1a1e26, roughness: 1, side: THREE.DoubleSide })
+  );
+  ceil.rotation.x = Math.PI / 2;
+  ceil.position.y = WALL_H;
+  scene.add(ceil);
+
+  const spots = [];
+
+  // 방 문(포털) — 안쪽 벽을 따라 일렬 배치
+  const padGeo   = new THREE.CylinderGeometry(1.7, 1.7, 0.14, 40);
+  const frameGeo = new THREE.BoxGeometry(3.0, 3.6, 0.4);
+  const faceGeo  = new THREE.PlaneGeometry(2.3, 3.0);
+
+  const gap = 7.5;
+  const startX = -gap * (ROOMS.length - 1) / 2;
+
+  ROOMS.forEach((room, i) => {
+    const x = startX + gap * i, z = -half + 4;
+    const color = STATE_COLOR[room.state] || 0x7fd18b;
+
+    const pad = new THREE.Mesh(padGeo, new THREE.MeshStandardMaterial({
+      color: 0x2c313c, emissive: color, emissiveIntensity: .35, roughness: .6,
+    }));
+    pad.position.set(x, 0.07, z + 1.6);
+    scene.add(pad);
+
+    const frame = new THREE.Mesh(frameGeo, new THREE.MeshStandardMaterial({ color: 0x30353f, roughness: .8 }));
+    frame.position.set(x, 1.8, z);
+    scene.add(frame);
+
+    const face = new THREE.Mesh(faceGeo, new THREE.MeshBasicMaterial({
+      color, transparent: true, opacity: room.state === 'wait' ? .5 : .22, side: THREE.DoubleSide,
+    }));
+    face.position.set(x, 1.75, z + 0.23);
+    scene.add(face);
+
+    const glow = new THREE.PointLight(color, room.state === 'wait' ? 9 : 4, 11, 2);
+    glow.position.set(x, 2.6, z + 1.2);
+    scene.add(glow);
+
+    const label = makeLabel(room.name, room.players + ' / ' + room.max + ' · ' + STATE_TEXT[room.state], '#' + color.toString(16).padStart(6, '0'));
+    label.position.set(x, 4.5, z + 0.3);
+    scene.add(label);
+
+    spots.push({
+      kind: 'room',
+      pos: new THREE.Vector3(x, 0, z + 1.6),
+      text: '입장',
+      meta: room.name + ' · ' + room.players + '/' + room.max + ' · ' + STATE_TEXT[room.state],
+      room,
+    });
+  });
+
+  // 방 만들기 존 — 반대편, 빛나는 발판
+  {
+    const x = 0, z = half - 5, color = 0xe0c85a;
+    const pad = new THREE.Mesh(new THREE.CylinderGeometry(2.1, 2.1, 0.16, 44), new THREE.MeshStandardMaterial({
+      color: 0x3a3526, emissive: color, emissiveIntensity: .55, roughness: .5,
+    }));
+    pad.position.set(x, 0.08, z);
+    scene.add(pad);
+
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.5, 2.0, 5.4, 28, 1, true),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: .12, side: THREE.DoubleSide })
+    );
+    beam.position.set(x, 2.8, z);
+    scene.add(beam);
+
+    const glow = new THREE.PointLight(color, 8, 13, 2);
+    glow.position.set(x, 3.2, z);
+    scene.add(glow);
+
+    const label = makeLabel('방 만들기', '새 방을 연다', '#e0c85a');
+    label.position.set(x, 4.6, z);
+    scene.add(label);
+
+    spots.push({ kind: 'create', pos: new THREE.Vector3(x, 0, z), text: '방 만들기', meta: '' });
+  }
+
+  return {
+    scene,
+    limit: half - 1.2,
+    spawn: new THREE.Vector3(0, EYE, half - 11),
+    yaw: 0,                // 스폰 시 방 문들(-z 쪽)을 바라보게
+    spots,
+  };
+}
+
+const WORLDS = { game: buildField(), lobby: buildLobby() };
+let world = WORLDS.game;   // 메뉴 배경으로도 쓰인다
+
+// ── 플레이어 상태 ────────────────────────────────────────
+const pos = new THREE.Vector3().copy(world.spawn);
+const vel = new THREE.Vector3();   // x,z = 수평 실제속도 / y = 수직속도
+const wish = new THREE.Vector3();  // 이번 프레임 목표 수평 속도
+let onGround = true;
+let yaw = 0, pitch = 0;
+
+function enterWorld(name) {
+  world = WORLDS[name];
+  pos.copy(world.spawn);
+  vel.set(0, 0, 0);
+  yaw = world.yaw;
+  pitch = 0;
+  onGround = true;
+  camera.position.copy(pos);
+  camera.rotation.set(pitch, yaw, 0);
+}
 
 // ── 화면 상태 ────────────────────────────────────────────
-// 'menu' | 'lobby' | 'game'  — 게임 로직·WebSocket은 이 상태 위에 얹는다.
+// 'menu' | 'lobby' | 'game' — 게임 로직·WebSocket은 이 상태 위에 얹는다.
 const SCREENS = {
   menu:  document.getElementById('screen-menu'),
-  lobby: document.getElementById('screen-lobby'),
   pause: document.getElementById('screen-pause'),
 };
-const hudEl   = document.getElementById('hud');
-const crossEl = document.getElementById('cross');
+const hudEl      = document.getElementById('hud');
+const crossEl    = document.getElementById('cross');
+const barEl      = document.getElementById('lobbybar');
+const promptEl   = document.getElementById('prompt');
+const promptText = document.getElementById('prompt-text');
+const promptMeta = document.getElementById('prompt-meta');
 
 let screen = 'menu';   // 현재 화면
-let paused = false;    // game 화면에서 포인터 잠금이 풀린 상태
+let paused = false;    // 3D 화면에서 포인터 잠금이 풀린 상태
 
 function showScreen(name) {
   screen = name;
   paused = false;
-  for (const k in SCREENS) SCREENS[k].classList.toggle('on', k === name);
-  const inGame = name === 'game';
-  hudEl.classList.toggle('on', inGame);
-  crossEl.classList.toggle('on', inGame);
-  if (!inGame) releaseLock();
-  if (name === 'lobby') renderRooms();
+  const solid = name === 'menu';
+  SCREENS.menu.classList.toggle('on', solid);
+  SCREENS.pause.classList.remove('on');
+
+  const in3d = name === 'game' || name === 'lobby';
+  hudEl.classList.toggle('on', in3d);
+  hudEl.classList.toggle('lobby', name === 'lobby');
+  hudEl.classList.toggle('game', name === 'game');
+  crossEl.classList.toggle('on', in3d);
+  barEl.classList.toggle('on', name === 'lobby');
+  if (!in3d) { promptEl.classList.remove('on'); nearSpot = null; }
+
+  if (in3d) enterWorld(name);
+  else releaseLock();
 }
 
 function showPause(on) {
   paused = on;
   SCREENS.pause.classList.toggle('on', on);
   crossEl.classList.toggle('on', !on);
+  if (on) promptEl.classList.remove('on');
 }
 
 // ── 포인터 잠금 ──────────────────────────────────────────
@@ -262,10 +473,19 @@ function releaseLock() {
   if (document.pointerLockElement) document.exitPointerLock();
 }
 
+function enter3d(name) {
+  showScreen(name);
+  requestLock();
+  // 잠금 요청이 거부되면 pointerlockchange가 안 온다 → 조작 불가 화면에 갇히지 않도록 확인
+  setTimeout(() => { if (screen === name && !locked) showPause(true); }, 500);
+}
+
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === renderer.domElement;
   if (!locked) clearKeys();
-  if (screen === 'game') showPause(!locked);
+  if (locked) { if (paused) showPause(false); return; }
+  if (screen === 'game') showPause(true);
+  else if (screen === 'lobby') showScreen('menu');   // 로비 ESC → 메뉴 복귀
 });
 
 // ── 토스트 ───────────────────────────────────────────────
@@ -276,81 +496,60 @@ function toast(msg) {
   toastEl.textContent = msg;
   toastEl.classList.add('on');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toastEl.classList.remove('on'), 2000);
+  toastTimer = setTimeout(() => toastEl.classList.remove('on'), 2200);
 }
 
-// ── 로비 (UI 셸 — 실제 서버 연결은 08단계) ───────────────
-const DUMMY_ROOMS = [
-  { id: 'r1', name: '연습방', players: 1, max: 2, state: 'wait' },
-  { id: 'r2', name: '빠른대전', players: 2, max: 2, state: 'play' },
-];
+// ── 근접 상호작용 ────────────────────────────────────────
+let nearSpot = null;
 
-const roomsEl = document.getElementById('rooms');
+function updateInteract() {
+  if (screen !== 'lobby' || paused) { nearSpot = null; promptEl.classList.remove('on'); return; }
 
-function renderRooms() {
-  roomsEl.textContent = '';
-  if (DUMMY_ROOMS.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'rooms-empty';
-    empty.textContent = '열린 방이 없습니다';
-    roomsEl.appendChild(empty);
-    return;
+  let best = null, bestD = Infinity;
+  for (const s of world.spots) {
+    const dx = s.pos.x - pos.x, dz = s.pos.z - pos.z;
+    const d = Math.hypot(dx, dz);
+    if (d < REACH && d < bestD) { bestD = d; best = s; }
   }
-  for (const r of DUMMY_ROOMS) {
-    const b = document.createElement('button');
-    b.className = 'room';
-    b.type = 'button';
 
-    const nm = document.createElement('span');
-    nm.className = 'nm';
-    nm.textContent = r.name;
-
-    const ppl = document.createElement('span');
-    ppl.className = 'ppl';
-    ppl.textContent = r.players + ' / ' + r.max;
-
-    const st = document.createElement('span');
-    st.className = 'st' + (r.state === 'wait' ? ' wait' : '');
-    st.textContent = r.state === 'wait' ? '대기' : '진행';
-
-    b.append(nm, ppl, st);
-    b.addEventListener('click', () => toast('온라인 대전 준비 중입니다'));
-    roomsEl.appendChild(b);
+  if (best !== nearSpot) {
+    nearSpot = best;
+    if (best) {
+      promptText.textContent = best.text;
+      promptMeta.textContent = best.meta;
+    }
   }
+  promptEl.classList.toggle('on', !!best);
+}
+
+function interact() {
+  if (!nearSpot) return;
+  if (nearSpot.kind === 'create') toast('방 만들기 준비 중입니다 (08단계)');
+  else toast('온라인 대전 준비 중입니다 (08단계) — ' + nearSpot.room.name);
 }
 
 // ── 버튼 연결 ────────────────────────────────────────────
-document.getElementById('btn-bot').addEventListener('click', () => {
-  showScreen('game');
-  requestLock();
-  // 잠금 요청이 거부되면 pointerlockchange가 안 온다 → 빈 화면에 갇히지 않도록 확인
-  setTimeout(() => { if (screen === 'game' && !locked) showPause(true); }, 500);
-});
-document.getElementById('btn-online').addEventListener('click', () => showScreen('lobby'));
-document.getElementById('btn-back').addEventListener('click', () => showScreen('menu'));
-document.getElementById('btn-create').addEventListener('click', () => toast('방 만들기 준비 중입니다'));
-document.getElementById('btn-refresh').addEventListener('click', () => {
-  renderRooms();
-  toast('온라인 서버 미연결 — 예시 목록입니다');
-});
+document.getElementById('btn-bot').addEventListener('click', () => enter3d('game'));
+document.getElementById('btn-online').addEventListener('click', () => enter3d('lobby'));
 document.getElementById('btn-resume').addEventListener('click', requestLock);
 document.getElementById('btn-tomenu').addEventListener('click', () => showScreen('menu'));
 
 // ── 입력 ─────────────────────────────────────────────────
 const keys = Object.create(null);
-let yaw = 0, pitch = 0;
 
 function clearKeys() { for (const k in keys) keys[k] = false; }
 
 addEventListener('keydown', (e) => {
   if (e.code === 'Escape') {
-    // game 화면의 ESC는 보통 브라우저가 포인터 잠금 해제로 처리한다 (pointerlockchange에서 받음).
-    // 잠금이 애초에 안 걸린 경우엔 그 이벤트가 안 오므로 여기서 직접 일시정지를 띄운다.
+    // 잠금 상태의 ESC는 브라우저가 잠금 해제로 처리한다 (pointerlockchange에서 받음).
+    // 잠금이 애초에 안 걸린 경우엔 그 이벤트가 안 오므로 여기서 직접 처리한다.
+    if (locked) return;
     if (screen === 'lobby') showScreen('menu');
-    else if (screen === 'game' && !locked) showPause(true);
+    else if (screen === 'game') showPause(true);
     return;
   }
-  if (screen !== 'game' || paused) return;
+  if (screen === 'menu' || paused) return;
+  if (e.code === 'KeyE' && screen === 'lobby') { interact(); return; }
   keys[e.code] = true;
   if (e.code === 'Space') e.preventDefault();   // 페이지 스크롤 방지
 });
@@ -371,14 +570,7 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
-// ── 플레이어 상태 ────────────────────────────────────────
-const pos = new THREE.Vector3(0, EYE, 0);
-const vel = new THREE.Vector3();   // x,z = 수평 실제속도 / y = 수직속도
-let onGround = true;
-
-const wish = new THREE.Vector3();  // 이번 프레임 목표 수평 속도
-const LIMIT = WORLD / 2 - 1;
-
+// ── 이동 갱신 (게임·로비 공용) ───────────────────────────
 function update(dt) {
   // 카메라 기준 방향 (수평면)
   const sy = Math.sin(yaw), cy = Math.cos(yaw);
@@ -412,9 +604,10 @@ function update(dt) {
   // 바닥 착지
   if (pos.y <= EYE) { pos.y = EYE; vel.y = 0; onGround = true; }
 
-  // 평지 밖으로 못 나가게
-  pos.x = Math.max(-LIMIT, Math.min(LIMIT, pos.x));
-  pos.z = Math.max(-LIMIT, Math.min(LIMIT, pos.z));
+  // 월드 경계 (로비는 벽 안쪽, 평지는 가장자리)
+  const L = world.limit;
+  pos.x = Math.max(-L, Math.min(L, pos.x));
+  pos.z = Math.max(-L, Math.min(L, pos.z));
 
   camera.position.copy(pos);
   camera.rotation.set(pitch, yaw, 0);
@@ -429,7 +622,7 @@ let hudAt = 0, frames = 0, fpsAt = 0, fps = 0;
 function drawHud(now, s) {
   frames++;
   if (now - fpsAt >= 500) { fps = Math.round((frames * 1000) / (now - fpsAt)); frames = 0; fpsAt = now; }
-  if (screen !== 'game' || now - hudAt < 100) return;
+  if (screen === 'menu' || now - hudAt < 100) return;
   hudAt = now;
   stat.innerHTML =
     'x ' + pos.x.toFixed(1) + ' · z ' + pos.z.toFixed(1) + ' · y ' + (pos.y - EYE).toFixed(1) +
@@ -439,18 +632,19 @@ function drawHud(now, s) {
 }
 
 // ── 루프 ─────────────────────────────────────────────────
-// 메뉴·로비에서도 씬은 계속 그린다 (뒤 배경으로 보이는 편이 낫다).
-// 플레이어 갱신은 game 화면 + 포인터 잠금 상태에서만.
+// 메뉴에서도 씬은 계속 그린다 (반투명 배경 뒤로 보이는 편이 낫다).
+// 플레이어 갱신은 3D 화면 + 포인터 잠금 상태에서만.
 let prev = performance.now();
 
 function loop(now) {
   requestAnimationFrame(loop);
   const dt = Math.min((now - prev) / 1000, MAXDT);
   prev = now;
-  const active = screen === 'game' && locked;
+  const active = (screen === 'game' || screen === 'lobby') && locked;
   const s = active ? update(dt) : { running: false, speed: 0 };
+  updateInteract();
   drawHud(now, s);
-  renderer.render(scene, camera);
+  renderer.render(world.scene, camera);
 }
 requestAnimationFrame(loop);
 
