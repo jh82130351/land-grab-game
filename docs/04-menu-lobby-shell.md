@@ -90,7 +90,7 @@ GitHub Pages는 이번에도 켜지지 않았다. `gh api repos/.../pages` 가 �
 활성화 시 주소는 `https://jh82130351.github.io/land-grab-game/`.
 
 ## 새 커밋 해시
-- `__COMMIT__`
+- `55b11cf`
 
 ## 감독 확인 요청 사항 / 남은 이슈
 1. **로비 예시 방 2개는 가짜 데이터다** (`DUMMY_ROOMS`). 08단계에서 서버 응답으로 교체한다.
