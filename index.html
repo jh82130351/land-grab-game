@@ -1738,7 +1738,9 @@ function loop(now) {
   const active = (screen === 'game' || screen === 'lobby') && locked;
   const s = active ? movePlayer(dt) : { running: false, speed: 0 };
 
-  if (screen === 'game' && active) stepMatch(dt);
+  // 온라인 방장은 전원의 판정을 맡는다. 내 포인터 잠금이 풀렸다고(다른 창 클릭·ESC·탭 전환)
+  // 멈춰버리면 게스트의 궤적·점령·타이머가 통째로 멎는다. 방장은 잠금과 무관하게 계속 돈다.
+  if (screen === 'game' && (active || (online && iamHost && !matchOver))) stepMatch(dt);
   if (online && screen === 'game' && !matchOver) {
     if (iamHost) hostTick(now); else if (locked) guestTick(now);
   }
