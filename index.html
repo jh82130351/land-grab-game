@@ -109,6 +109,8 @@
   #lobbybar.on{display:flex}
   #lobbybar .sep{width:1px;height:13px;background:#4a3a22}
   #lobbybar .hint{color:var(--dim)}
+  #lobbybar #netstate.ok{color:var(--accent)}
+  #lobbybar #netstate.bad{color:#ff8a8a}
   #lobbybar .hint b{color:var(--fg);background:var(--key);border-radius:4px;padding:1px 6px}
 
   #prompt{position:fixed;left:50%;top:calc(50% + 42px);transform:translateX(-50%);z-index:6;
@@ -148,7 +150,7 @@
 </div>
 
 <div id="lobbybar">
-  <span>온라인 서버 미연결 — 후속 단계 예정</span>
+  <span id="netstate">연결 중…</span>
   <span class="sep"></span>
   <span class="hint">문 앞으로 걸어가 <b>E</b> · 나가려면 <b>ESC</b></span>
 </div>
@@ -170,6 +172,15 @@
   <div class="btns">
     <button class="btn primary" id="btn-resume">계속하기</button>
     <button class="btn" id="btn-tomenu">메뉴로 나가기</button>
+  </div>
+</section>
+
+<section id="screen-room" class="screen">
+  <h2 id="room-name">방</h2>
+  <p id="room-note"></p>
+  <div class="rank" id="room-members"></div>
+  <div class="btns">
+    <button class="btn" id="btn-room-leave">방 나가기</button>
   </div>
 </section>
 
@@ -209,7 +220,7 @@ const RESPAWN_SEC = 1.5;        // 사망 후 리스폰 대기
 const START_R = 2;              // 시작 영역 반경 (5x5)
 const BOT_SPEED = 5.6;
 
-const LOBBY = 40, REACH = 3.2;
+const LOBBY = 56, REACH = 3.2;   // 문 슬롯 6개(간격 8.2m)가 들어가려면 40m로는 좁다
 
 // ═══ 렌더러 · 카메라 ═════════════════════════════════════
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -378,27 +389,51 @@ function buildArena() {
 }
 
 // ═══ 월드 2: 온라인 로비 ═════════════════════════════════
-const ROOMS = [
-  { id: 'r1', name: '연습방',    players: 1, max: 2, state: 'wait' },
-  { id: 'r2', name: '빠른대전',  players: 2, max: 2, state: 'play' },
-  { id: 'r3', name: '초보 환영', players: 0, max: 2, state: 'wait' },
-];
+// 방 목록은 서버에서 실시간으로 온다. 문 오브젝트는 미리 6개 만들어 두고
+// 목록이 바뀌면 보이기/라벨만 갈아끼운다 (매번 생성·폐기하면 GC가 튄다).
+const SLOT_N = 6;
 const STATE_TEXT = { wait: '대기', play: '진행' };
 const STATE_COLOR = { wait: 0x7fd18b, play: 0xe0a55a };
+
+// 갱신 가능한 3D 라벨 — 캔버스를 들고 있다가 다시 그린다
+function makeSlotLabel() {
+  const W = 512, H = 168, c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+  sprite.scale.set(3.6, 1.18, 1);
+
+  function draw(title, sub, accent) {
+    g.clearRect(0, 0, W, H);
+    g.fillStyle = 'rgba(12,15,20,.88)';
+    roundRect(g, 6, 6, W - 12, H - 12, 20); g.fill();
+    g.strokeStyle = accent; g.lineWidth = 4; g.stroke();
+    g.textAlign = 'center';
+    g.fillStyle = '#ffffff'; g.font = 'bold 52px system-ui, sans-serif'; g.fillText(title, W / 2, 74);
+    g.fillStyle = '#9aa0a6'; g.font = '34px system-ui, sans-serif';     g.fillText(sub, W / 2, 126);
+    tex.needsUpdate = true;
+  }
+  return { sprite, draw };
+}
 
 function buildLobby() {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x14171d);
-  scene.fog = new THREE.Fog(0x14171d, 18, 48);
+  scene.fog = new THREE.Fog(0x14171d, 22, 62);
 
-  scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-  scene.add(new THREE.HemisphereLight(0x9fb4d8, 0x30261c, 0.55));
+  scene.add(new THREE.AmbientLight(0xffffff, 0.62));
+  scene.add(new THREE.HemisphereLight(0x9fb4d8, 0x30261c, 0.6));
   const key = new THREE.DirectionalLight(0xfff0d8, 0.7);
   key.position.set(10, 22, 8);
   scene.add(key);
-  const lamp = new THREE.PointLight(0xfff3e0, 60, 46, 2);
-  lamp.position.set(0, 6.2, 0);
-  scene.add(lamp);
+  // 천장등 3개 — 하나로는 가운데만 밝고 벽이 죽는다
+  [[-16, -8], [0, 6], [16, -8]].forEach(([lx, lz]) => {
+    const lamp = new THREE.PointLight(0xfff3e0, 45, 46, 2);
+    lamp.position.set(lx, 6.4, lz);
+    scene.add(lamp);
+  });
 
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(LOBBY, LOBBY),
@@ -421,58 +456,58 @@ function buildLobby() {
   );
   ceil.rotation.x = Math.PI / 2; ceil.position.y = WALL_H; scene.add(ceil);
 
-  const spots = [];
+  // 방 슬롯 6개 — 안쪽 벽을 따라 일렬
   const padGeo = new THREE.CylinderGeometry(1.7, 1.7, 0.14, 40);
   const frameGeo = new THREE.BoxGeometry(3.0, 3.6, 0.4);
   const faceGeo = new THREE.PlaneGeometry(2.3, 3.0);
-  const gap = 7.5, startX = -gap * (ROOMS.length - 1) / 2;
+  const gap = 8.2, startX = -gap * (SLOT_N - 1) / 2, zWall = -half + 4;
 
-  ROOMS.forEach((room, i) => {
-    const x = startX + gap * i, z = -half + 4;
-    const color = STATE_COLOR[room.state] || 0x7fd18b;
-
+  const slots = [];
+  for (let i = 0; i < SLOT_N; i++) {
+    const x = startX + gap * i;
     const pad = new THREE.Mesh(padGeo, new THREE.MeshStandardMaterial({
-      color: 0x2c313c, emissive: color, emissiveIntensity: .35, roughness: .6 }));
-    pad.position.set(x, 0.07, z + 1.6); scene.add(pad);
-
+      color: 0x2c313c, emissive: 0x7fd18b, emissiveIntensity: .35, roughness: .6 }));
+    pad.position.set(x, 0.07, zWall + 1.6);
     const frame = new THREE.Mesh(frameGeo, new THREE.MeshStandardMaterial({ color: 0x30353f, roughness: .8 }));
-    frame.position.set(x, 1.8, z); scene.add(frame);
-
+    frame.position.set(x, 1.8, zWall);
     const face = new THREE.Mesh(faceGeo, new THREE.MeshBasicMaterial({
-      color, transparent: true, opacity: room.state === 'wait' ? .5 : .22, side: THREE.DoubleSide }));
-    face.position.set(x, 1.75, z + 0.23); scene.add(face);
+      color: 0x7fd18b, transparent: true, opacity: .5, side: THREE.DoubleSide }));
+    face.position.set(x, 1.75, zWall + 0.23);
+    const glow = new THREE.PointLight(0x7fd18b, 9, 12, 2);
+    glow.position.set(x, 2.6, zWall + 1.2);
+    const label = makeSlotLabel();
+    label.sprite.position.set(x, 4.5, zWall + 0.3);
 
-    const glow = new THREE.PointLight(color, room.state === 'wait' ? 9 : 4, 11, 2);
-    glow.position.set(x, 2.6, z + 1.2); scene.add(glow);
-
-    const label = makeLabel(room.name, room.players + ' / ' + room.max + ' · ' + STATE_TEXT[room.state],
-                            '#' + color.toString(16).padStart(6, '0'));
-    label.position.set(x, 4.5, z + 0.3); scene.add(label);
-
-    spots.push({ kind: 'room', pos: new THREE.Vector3(x, 0, z + 1.6), text: '입장',
-                 meta: room.name + ' · ' + room.players + '/' + room.max + ' · ' + STATE_TEXT[room.state], room });
-  });
-
-  {
-    const x = 0, z = half - 5, color = 0xe0c85a;
-    const pad = new THREE.Mesh(new THREE.CylinderGeometry(2.1, 2.1, 0.16, 44),
-      new THREE.MeshStandardMaterial({ color: 0x3a3526, emissive: color, emissiveIntensity: .55, roughness: .5 }));
-    pad.position.set(x, 0.08, z); scene.add(pad);
-
-    const beam = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 2.0, 5.4, 28, 1, true),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: .12, side: THREE.DoubleSide }));
-    beam.position.set(x, 2.8, z); scene.add(beam);
-
-    const glow = new THREE.PointLight(color, 8, 13, 2);
-    glow.position.set(x, 3.2, z); scene.add(glow);
-
-    const label = makeLabel('방 만들기', '새 방을 연다', '#e0c85a');
-    label.position.set(x, 4.6, z); scene.add(label);
-
-    spots.push({ kind: 'create', pos: new THREE.Vector3(x, 0, z), text: '방 만들기', meta: '' });
+    scene.add(pad, frame, face, glow, label.sprite);
+    const slot = { pad, frame, face, glow, label, x, z: zWall + 1.6, zWall, room: null };
+    setSlotVisible(slot, false);
+    slots.push(slot);
   }
 
-  return { scene, limit: half - 1.2, spawn: new THREE.Vector3(0, EYE, half - 11), yaw: 0, spots };
+  // 방 만들기 존
+  const cx = 0, cz = half - 5, cc = 0xe0c85a;
+  const cpad = new THREE.Mesh(new THREE.CylinderGeometry(2.1, 2.1, 0.16, 44),
+    new THREE.MeshStandardMaterial({ color: 0x3a3526, emissive: cc, emissiveIntensity: .55, roughness: .5 }));
+  cpad.position.set(cx, 0.08, cz); scene.add(cpad);
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 2.0, 5.4, 28, 1, true),
+    new THREE.MeshBasicMaterial({ color: cc, transparent: true, opacity: .12, side: THREE.DoubleSide }));
+  beam.position.set(cx, 2.8, cz); scene.add(beam);
+  const cglow = new THREE.PointLight(cc, 8, 14, 2);
+  cglow.position.set(cx, 3.2, cz); scene.add(cglow);
+  const clabel = makeSlotLabel();
+  clabel.draw('방 만들기', '새 방을 연다', '#e0c85a');
+  clabel.sprite.position.set(cx, 4.6, cz); scene.add(clabel.sprite);
+
+  const createSpot = { kind: 'create', pos: new THREE.Vector3(cx, 0, cz), text: '방 만들기', meta: '' };
+
+  return { scene, limit: half - 1.2, spawn: new THREE.Vector3(0, EYE, half - 22), yaw: 0,
+           spots: [createSpot], slots, createSpot };
+}
+
+function setSlotVisible(slot, on) {
+  slot.pad.visible = on; slot.frame.visible = on; slot.face.visible = on;
+  slot.label.sprite.visible = on; slot.glow.visible = on;
+  slot.glow.intensity = on ? slot.glow.intensity : 0;
 }
 
 const WORLDS = { game: buildArena(), lobby: buildLobby() };
@@ -890,6 +925,7 @@ const SCREENS = {
   menu:   document.getElementById('screen-menu'),
   pause:  document.getElementById('screen-pause'),
   result: document.getElementById('screen-result'),
+  room:   document.getElementById('screen-room'),
 };
 const hudEl = document.getElementById('hud');
 const crossEl = document.getElementById('cross');
@@ -907,6 +943,7 @@ function showScreen(name) {
   paused = false;
   SCREENS.menu.classList.toggle('on', name === 'menu');
   SCREENS.result.classList.toggle('on', name === 'result');
+  SCREENS.room.classList.toggle('on', name === 'room');
   SCREENS.pause.classList.remove('on');
 
   const in3d = name === 'game' || name === 'lobby';
@@ -924,6 +961,7 @@ function showScreen(name) {
   if (name === 'game') { initMatch(); enterWorld('game'); }
   else if (name === 'lobby') enterWorld('lobby');
   else releaseLock();
+  if (name === 'menu') netClose();
 }
 
 function showPause(on) {
@@ -1085,6 +1123,122 @@ function pushFeed(ent, reason) {
   setTimeout(() => row.remove(), 6000);
 }
 
+// ═══ 네트워크 (방 서버) ═════════════════════════════════
+// 서버는 방 관리와 중계만 한다. 게임 계산은 방장 클라이언트가 맡는다(마일스톤 C).
+const WS_URL = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/game/ws';
+const netEl = document.getElementById('netstate');
+
+let sock = null, myId = null, myRoom = null, iamHost = false, netOk = false;
+
+function myName() {
+  let n = null;
+  try { n = localStorage.getItem('lg.name'); } catch (e) { n = null; }
+  if (!n) {
+    n = '플레이어-' + (1000 + Math.floor(Math.random() * 9000));
+    try { localStorage.setItem('lg.name', n); } catch (e) { /* 사생활 보호 모드 */ }
+  }
+  return n;
+}
+
+function setNet(text, cls) { netEl.textContent = text; netEl.className = cls || ''; }
+
+function send(obj) { if (sock && sock.readyState === 1) sock.send(JSON.stringify(obj)); }
+
+function netConnect() {
+  if (sock && (sock.readyState === 0 || sock.readyState === 1)) return;
+  setNet('연결 중…', '');
+  try { sock = new WebSocket(WS_URL); } catch (e) { setNet('연결 실패', 'bad'); return; }
+
+  sock.onopen = () => { netOk = true; setNet('온라인 연결됨', 'ok'); send({ t: 'hello', name: myName() }); };
+  sock.onmessage = (ev) => { let m; try { m = JSON.parse(ev.data); } catch (e) { return; } onNet(m); };
+  sock.onerror = () => setNet('연결 오류', 'bad');
+  sock.onclose = () => {
+    netOk = false;
+    setNet('연결 끊김', 'bad');
+    renderRooms([]);
+    if (screen === 'room') { myRoom = null; toast('서버와 연결이 끊겼습니다'); enter3d('lobby'); }
+  };
+}
+
+function netClose() {
+  if (sock) { try { sock.close(); } catch (e) { /* 이미 닫힘 */ } sock = null; }
+  netOk = false; myRoom = null;
+}
+
+function onNet(m) {
+  if (m.t === 'welcome') myId = m.id;
+  else if (m.t === 'rooms') renderRooms(m.rooms);
+  else if (m.t === 'joined') { myRoom = m.room; iamHost = m.you === 'host'; showScreen('room'); updateRoomPanel(m.room, null); }
+  else if (m.t === 'room') { myRoom = m.room; updateRoomPanel(m.room, m.members); }
+  else if (m.t === 'peer') toast(m.name + (m.event === 'join' ? ' 님이 들어왔습니다' : ' 님이 나갔습니다'));
+  else if (m.t === 'left') myRoom = null;
+  else if (m.t === 'error') toast(m.msg);
+}
+
+// 서버가 준 목록을 3D 문 슬롯에 반영한다
+function renderRooms(list) {
+  const lob = WORLDS.lobby;
+  const spots = [lob.createSpot];
+  const gap = 8.2, n = Math.min(list.length, lob.slots.length);
+  const startX = -gap * (n - 1) / 2;
+  lob.slots.forEach((slot, i) => {
+    const r = i < n ? list[i] : null;
+    slot.room = r || null;
+    setSlotVisible(slot, !!r);
+    if (!r) return;
+    // 보이는 방 개수에 맞춰 가운데 정렬
+    const x = startX + gap * i;
+    slot.x = x;
+    slot.pad.position.x = x;
+    slot.frame.position.x = x;
+    slot.face.position.x = x;
+    slot.glow.position.x = x;
+    slot.label.sprite.position.x = x;
+    const color = STATE_COLOR[r.state] || 0x7fd18b;
+    slot.pad.material.emissive.setHex(color);
+    slot.face.material.color.setHex(color);
+    slot.face.material.opacity = r.state === 'wait' ? .5 : .22;
+    slot.glow.color.setHex(color);
+    slot.glow.intensity = r.state === 'wait' ? 9 : 4;
+    slot.label.draw(r.name, r.players + ' / ' + r.max + ' · ' + STATE_TEXT[r.state],
+                    '#' + color.toString(16).padStart(6, '0'));
+    spots.push({ kind: 'room', pos: new THREE.Vector3(slot.x, 0, slot.z),
+                 text: r.state === 'play' ? '가득 참' : '입장',
+                 meta: r.name + ' · ' + r.players + '/' + r.max, room: r });
+  });
+  lob.spots = spots;
+  if (netOk) setNet(list.length ? '온라인 연결됨 · 방 ' + list.length + '개' : '온라인 연결됨 · 열린 방 없음', 'ok');
+}
+
+function updateRoomPanel(room, members) {
+  document.getElementById('room-name').textContent = room.name;
+  document.getElementById('room-note').textContent = room.players >= room.max
+    ? '두 명이 모였습니다 — 게임 연결은 다음 단계입니다'
+    : '상대를 기다리는 중… (' + room.players + ' / ' + room.max + ')';
+  if (!members) return;
+  const box = document.getElementById('room-members');
+  box.textContent = '';
+  members.forEach((mm, k) => {
+    const row = document.createElement('div');
+    row.className = 'row' + (mm.id === myId ? ' me' : '');
+    const no = document.createElement('span'); no.className = 'no'; no.textContent = (k + 1) + '.';
+    const dot = document.createElement('span'); dot.className = 'dot';
+    dot.style.background = CSS_COLOR[k % CSS_COLOR.length];
+    const nm = document.createElement('span'); nm.className = 'nm';
+    nm.textContent = mm.name + (mm.id === myId ? ' (나)' : '');
+    const pc = document.createElement('span'); pc.className = 'pc';
+    pc.textContent = mm.host ? '방장' : '참가';
+    row.append(no, dot, nm, pc);
+    box.appendChild(row);
+  });
+}
+
+function leaveRoom() {
+  send({ t: 'leave' });
+  myRoom = null;
+  enter3d('lobby');
+}
+
 // ═══ 로비 상호작용 ═══════════════════════════════════════
 let nearSpot = null;
 
@@ -1104,13 +1258,18 @@ function updateInteract() {
 
 function interact() {
   if (!nearSpot) return;
-  if (nearSpot.kind === 'create') toast('방 만들기 준비 중입니다');
-  else toast('온라인 대전 준비 중입니다 — ' + nearSpot.room.name);
+  if (!netOk) { toast('서버에 연결되어 있지 않습니다'); return; }
+  if (nearSpot.kind === 'create') { send({ t: 'create', name: myName() + '의 방' }); return; }
+  const r = nearSpot.room;
+  if (!r) return;
+  if (r.players >= r.max) { toast('방이 가득 찼습니다'); return; }
+  send({ t: 'join', room: r.id });
 }
 
 // ═══ 버튼 ════════════════════════════════════════════════
 document.getElementById('btn-bot').addEventListener('click', () => enter3d('game'));
-document.getElementById('btn-online').addEventListener('click', () => enter3d('lobby'));
+document.getElementById('btn-online').addEventListener('click', () => { netConnect(); enter3d('lobby'); });
+document.getElementById('btn-room-leave').addEventListener('click', leaveRoom);
 document.getElementById('btn-resume').addEventListener('click', requestLock);
 document.getElementById('btn-tomenu').addEventListener('click', () => showScreen('menu'));
 document.getElementById('btn-again').addEventListener('click', () => enter3d('game'));
@@ -1123,11 +1282,12 @@ function clearKeys() { for (const k in keys) keys[k] = false; }
 addEventListener('keydown', (e) => {
   if (e.code === 'Escape') {
     if (locked) return;
-    if (screen === 'lobby') showScreen('menu');
+    if (screen === 'room') leaveRoom();
+    else if (screen === 'lobby') showScreen('menu');
     else if (screen === 'game') showPause(true);
     return;
   }
-  if (screen === 'menu' || screen === 'result' || paused) return;
+  if (screen === 'menu' || screen === 'result' || screen === 'room' || paused) return;
   if (e.code === 'KeyE' && screen === 'lobby') { interact(); return; }
   keys[e.code] = true;
   if (e.code === 'Space') e.preventDefault();
