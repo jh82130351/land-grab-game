@@ -119,7 +119,7 @@ git add . && git commit && git push origin main
 | GitHub Pages | 미사용 (지시대로) |
 
 ## 새 커밋 해시
-- `__COMMIT__`
+- `c2c7372`
 
 ## 알려진 버그 · 미완
 1. **봇이 여전히 가끔 자살한다.** 복귀 중 남의 궤적이 아니라 자기 궤적에 걸리는 경우가 남아 있다.
