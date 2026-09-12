@@ -76,4 +76,4 @@ if (screen === 'game' && (active || (online && iamHost && !matchOver))) stepMatc
 3. 09·10 문서의 미완 항목(치팅 방지 없음, 방장 이탈 시 종료, 자동 기동 미적용)은 그대로다.
 
 ## 새 커밋 해시
-- (아래 커밋 참조)
+- `71f6551`
