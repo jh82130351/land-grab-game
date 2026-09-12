@@ -726,6 +726,29 @@ function stepCell(ent, gx, gz) {
   }
 }
 
+// 마지막으로 있던 칸에서 새 칸까지 사이를 모두 채운다.
+// 네트워크 지연이나 프레임 저하로 위치 보고가 띄엄띄엄 오면 칸을 건너뛰는데,
+// 그러면 궤적에 구멍이 생겨 폐곡선이 닫히지 않고 점령이 통째로 실패한다.
+function stepCells(ent, gx, gz) {
+  if (!inGrid(gx, gz)) return;
+  if (ent.gx < 0) { stepCell(ent, gx, gz); return; }
+
+  let cx = ent.gx, cz = ent.gz;
+  if (Math.abs(gx - cx) + Math.abs(gz - cz) > 64) {   // 순간이동(리스폰 등)은 잇지 않는다
+    ent.gx = gx; ent.gz = gz;
+    stepCell(ent, gx, gz);
+    return;
+  }
+
+  let guard = 0;
+  while ((cx !== gx || cz !== gz) && guard++ < 80) {
+    if (Math.abs(gx - cx) >= Math.abs(gz - cz)) cx += Math.sign(gx - cx);
+    else cz += Math.sign(gz - cz);
+    stepCell(ent, cx, cz);
+    if (!ent.alive) return;        // 도중에 죽으면 거기서 멈춘다
+  }
+}
+
 function recount() {
   for (const e of ents) e.cells = 0;
   for (let i = 0; i < TOTAL; i++) {
@@ -1114,12 +1137,12 @@ function stepMatch(dt) {
 
   if (me.alive) {
     me.x = pos.x; me.z = pos.z;
-    stepCell(me, gxOf(pos.x), gzOf(pos.z));
+    stepCells(me, gxOf(pos.x), gzOf(pos.z));
   }
   for (const e of ents) {
     if (e === me || !e.alive) continue;
     if (e.bot) stepBot(e, dt);
-    else stepCell(e, gxOf(e.x), gzOf(e.z));   // 온라인 상대 — 본인이 보고한 위치로 판정
+    else stepCells(e, gxOf(e.x), gzOf(e.z));   // 온라인 상대 — 보고 사이 칸까지 메운다
   }
 
   for (const e of ents) {
