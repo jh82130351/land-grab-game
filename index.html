@@ -84,6 +84,15 @@
        border:1px solid var(--line);border-radius:10px;background:#0d1015}
   #map.on{display:block}
 
+  /* 킬로그 (미니맵 아래) */
+  #feed{position:fixed;right:14px;top:206px;z-index:6;display:none;
+        flex-direction:column;gap:5px;width:180px;pointer-events:none}
+  #feed.on{display:flex}
+  #feed .f{padding:7px 10px;border-radius:7px;font-size:11.5px;line-height:1.45;
+           border:1px solid var(--line);background:var(--panel)}
+  #feed .f .nm{font-weight:700}
+  #feed .f .why{color:var(--dim)}
+
   #cross{position:fixed;left:50%;top:50%;width:14px;height:14px;z-index:5;
          margin:-7px 0 0 -7px;pointer-events:none;opacity:.75;display:none}
   #cross.on{display:block}
@@ -126,6 +135,7 @@
 <div id="score"></div>
 <div id="timer"></div>
 <canvas id="map" width="180" height="180"></canvas>
+<div id="feed"></div>
 
 <div id="hud">
   <span><b>WASD</b> 이동</span>
@@ -474,8 +484,9 @@ const ents = SPECS.map((s) => ({
   id: s.id, name: s.name, bot: s.bot, rgb: s.rgb,
   x: 0, z: 0, gx: -1, gz: -1,
   alive: true, respawn: 0, trail: [], cells: 0,
-  heading: 0, mode: 'idle', turn: 1, legIdx: 0, legLen: [0, 0, 0], legLeft: 0,
-  homeX: 0, homeZ: 0,
+  dir: 0, tgx: 0, tgz: 0, phase: 'idle', turn: 1, legIdx: 0, legs: [0, 0, 0], legLeft: 0,
+  preyGx: 0, preyGz: 0, preyI: undefined,
+  homeX: 0, homeZ: 0, homeGx: 0, homeGz: 0,
 }));
 const me = ents[0];
 
@@ -504,6 +515,7 @@ function giveBlock(ent, gx, gz) {
     }
   }
   ent.homeX = wxOf(gx); ent.homeZ = wzOf(gz);
+  ent.homeGx = gx; ent.homeGz = gz;
 }
 
 // 궤적이 닫혔을 때만 호출된다. 바깥에서 flood-fill 해서 닿지 않는 칸을 전부 먹는다.
@@ -538,7 +550,7 @@ function capture(ent) {
       if (trail[i]) {               // 남의 궤적을 가둬버린 경우 — 그 주인은 죽는다
         const victim = ents[trail[i] - 1];
         trail[i] = 0;
-        if (victim.alive) kill(victim, ent);
+        if (victim.alive) kill(victim, ent, ent.name + '에게 포위당함');
       }
       paint(i);
       gained++;
@@ -548,15 +560,32 @@ function capture(ent) {
   return gained;
 }
 
-function kill(ent, by) {
+function kill(ent, by, why) {
   if (!ent.alive) return;
   ent.alive = false;
   ent.respawn = RESPAWN_SEC;
   clearTrailOf(ent);
   clearOwnedOf(ent);
   recount();
-  if (ent === me) toast(by && by !== me ? by.name + '에게 잡혔습니다' : '자기 궤적에 걸렸습니다');
+
+  const reason = why || (by === ent ? '자기 궤적에 걸림'
+                       : by ? by.name + '에게 잡힘' : '사망');
+  pushFeed(ent, reason);
+  if (ent === me) toast(reason);
   else if (by === me) toast(ent.name + '을(를) 잡았습니다');
+}
+
+function freeCellNear(gx, gz) {
+  for (let r = 4; r <= 40; r += 4) {
+    for (let k = 0; k < 24; k++) {
+      const a = Math.random() * Math.PI * 2;
+      const nx = Math.round(gx + Math.cos(a) * r), nz = Math.round(gz + Math.sin(a) * r);
+      if (nx < 3 || nz < 3 || nx > GRID - 4 || nz > GRID - 4) continue;
+      const i = nz * GRID + nx;
+      if (!owner[i] && !trail[i]) return [nx, nz];
+    }
+  }
+  return null;
 }
 
 function randomSpawnCell() {
@@ -570,12 +599,13 @@ function randomSpawnCell() {
 }
 
 function respawnEnt(ent) {
-  const [gx, gz] = randomSpawnCell();
+  const [gx, gz] = freeCellNear(ent.homeGx, ent.homeGz) || randomSpawnCell();
   giveBlock(ent, gx, gz);
   ent.x = wxOf(gx); ent.z = wzOf(gz);
   ent.gx = gx; ent.gz = gz;
+  ent.tgx = gx; ent.tgz = gz;
   ent.alive = true;
-  ent.mode = 'idle';
+  ent.phase = 'idle';
   if (ent === me) {
     pos.set(ent.x, EYE, ent.z);
     vel.set(0, 0, 0);
@@ -594,7 +624,7 @@ function stepCell(ent, gx, gz) {
 
   const t = trail[i];
   if (t) {                                  // 궤적을 밟았다 → 그 궤적 주인이 죽는다
-    kill(ents[t - 1], ent);
+    kill(ents[t - 1], ent, t === ent.id ? '자기 궤적에 걸림' : ent.name + '에게 잡힘');
     if (!ent.alive) return;                 // 자기 궤적이었다면 본인이 죽은 것
   }
 
@@ -616,72 +646,161 @@ function recount() {
 function share(ent) { return ent.cells / TOTAL; }
 
 // ═══ 봇 AI ═══════════════════════════════════════════════
-// 자기 땅에서 나가 몇 구간을 직진·직각회전으로 그린 뒤 집으로 돌아온다.
+// 격자를 따라 한 칸씩 이동한다. 자유 각도로 돌아다니면 자기 궤적에 걸려 자멸하는데,
+// 칸 단위로 움직이면 "다음 칸이 내 궤적인가"를 확실히 검사할 수 있다.
+const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+const MAX_TRAIL = 220;   // 이보다 길어지면 무조건 귀가 (욕심부리다 죽는 걸 막는다)
+
 function planBot(b) {
-  b.mode = 'out';
-  b.turn = Math.random() < 0.5 ? 1 : -1;   // 한 방향으로만 꺾어야 자기 궤적을 안 자른다
+  b.phase = 'out';
+  b.turn = Math.random() < 0.5 ? 1 : -1;   // 한 방향으로만 꺾어야 사각형이 닫힌다
   b.legIdx = 0;
-  // 사각형이 닫히도록 1번과 3번 변의 길이를 같게 한다.
-  // 다르면 복귀 경로가 1번 변을 가로질러 자기 궤적에 걸려 죽는다.
-  const a = 18 + Math.random() * 34, c = 18 + Math.random() * 34;
-  b.legLen = [a, c, a];
-  b.legLeft = b.legLen[0];
-  b.heading = Math.random() * Math.PI * 2;
+  const a = 10 + ((Math.random() * 22) | 0);   // 셀 단위 (1셀 = 1.5m)
+  const c = 10 + ((Math.random() * 22) | 0);
+  b.legs = [a, c, a];                      // 1변과 3변을 같게 → 복귀 경로가 1변을 안 자른다
+  b.legLeft = a;
+
+  // 네 방향 중 '내 땅이 아닌 칸'이 가장 많은 쪽으로 나간다.
+  // 안 그러면 자기 영토 한가운데로 걸어들어가 시간만 버린다.
+  let bestDir = 0, bestGain = -1;
+  for (let d = 0; d < 4; d++) {
+    let gain = 0;
+    for (let n = 1; n <= 24; n++) {
+      const nx = b.gx + DIRS[d][0] * n, nz = b.gz + DIRS[d][1] * n;
+      if (!inGrid(nx, nz)) { gain -= 6; break; }          // 벽 쪽은 감점
+      if (owner[nz * GRID + nx] !== b.id) gain++;
+    }
+    if (gain > bestGain) { bestGain = gain; bestDir = d; }
+  }
+  b.dir = bestDir;
+}
+
+// 사정거리 안의 남의 궤적을 찾는다. 있으면 끊으러 간다.
+function findPrey(b) {
+  let best = null, bestD = 15;   // 셀 단위
+  for (const e of ents) {
+    if (e === b || !e.alive) continue;
+    for (const i of e.trail) {
+      const gz = (i / GRID) | 0, gx = i - gz * GRID;
+      const d = Math.abs(gx - b.gx) + Math.abs(gz - b.gz);
+      if (d < bestD) { bestD = d; best = { gx, gz, i }; }
+    }
+  }
+  return best;
+}
+
+// 집이 남의 손에 넘어갔을 때 가장 가까운 내 땅을 다시 찾는다 (가끔만 호출)
+function retargetHome(b) {
+  let best = -1, bestD = Infinity;
+  for (let i = 0; i < TOTAL; i++) {
+    if (owner[i] !== b.id) continue;
+    const gz = (i / GRID) | 0, gx = i - gz * GRID;
+    const d = Math.abs(gx - b.gx) + Math.abs(gz - b.gz);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  if (best >= 0) { b.homeGz = (best / GRID) | 0; b.homeGx = best - b.homeGz * GRID; }
+}
+
+// 다음에 들어갈 칸을 고른다. 자기 궤적 칸은 절대 고르지 않는다.
+function botPick(b) {
+  if (b.phase === 'out') {
+    if (b.legLeft <= 0) {
+      b.legIdx++;
+      if (b.legIdx < b.legs.length) {
+        b.dir = (b.dir + (b.turn > 0 ? 1 : 3)) % 4;
+        b.legLeft = b.legs[b.legIdx];
+      } else {
+        b.phase = 'home';
+      }
+    }
+    if (b.trail.length > MAX_TRAIL) b.phase = 'home';
+  }
+
+  // 사냥: 근처에 남의 궤적이 있으면 끊으러 간다 (내 궤적이 길지 않을 때만)
+  if (b.phase !== 'home') {
+    if (b.phase === 'hunt') {
+      const ti = b.preyI;
+      if (ti === undefined || !trail[ti] || trail[ti] === b.id) b.phase = 'out';   // 이미 사라짐
+    }
+    if (b.phase === 'out' && b.trail.length < 110 && (b.gx + b.gz) % 3 === 0) {
+      const prey = findPrey(b);
+      if (prey) { b.phase = 'hunt'; b.preyGx = prey.gx; b.preyGz = prey.gz; b.preyI = prey.i; }
+    }
+  }
+
+  const order = [];
+  if (b.phase === 'hunt') {
+    const ddx = b.preyGx - b.gx, ddz = b.preyGz - b.gz;
+    if (Math.abs(ddx) >= Math.abs(ddz)) {
+      if (ddx) order.push(ddx > 0 ? 0 : 2);
+      if (ddz) order.push(ddz > 0 ? 1 : 3);
+    } else {
+      if (ddz) order.push(ddz > 0 ? 1 : 3);
+      if (ddx) order.push(ddx > 0 ? 0 : 2);
+    }
+    if (ddx === 0 && ddz === 0) b.phase = 'home';
+  } else if (b.phase === 'home') {
+    if (b.trail.length > MAX_TRAIL + 80) retargetHome(b);   // 집을 잃었을 가능성
+    const ddx = b.homeGx - b.gx, ddz = b.homeGz - b.gz;
+    // 축 정렬 이동 — 더 많이 벌어진 축부터 좁힌다
+    if (Math.abs(ddx) >= Math.abs(ddz)) {
+      if (ddx) order.push(ddx > 0 ? 0 : 2);
+      if (ddz) order.push(ddz > 0 ? 1 : 3);
+    } else {
+      if (ddz) order.push(ddz > 0 ? 1 : 3);
+      if (ddx) order.push(ddx > 0 ? 0 : 2);
+    }
+  } else {
+    order.push(b.dir, (b.dir + 1) % 4, (b.dir + 3) % 4);
+  }
+
+  const back = (b.dir + 2) % 4;
+  const margin = 2;
+  for (const d of order.concat([0, 1, 2, 3])) {
+    if (d === back) continue;
+    const nx = b.gx + DIRS[d][0], nz = b.gz + DIRS[d][1];
+    if (nx < margin || nz < margin || nx > GRID - 1 - margin || nz > GRID - 1 - margin) continue;
+    if (trail[nz * GRID + nx] === b.id) continue;   // 자기 궤적 회피 — 자멸 방지의 핵심
+    if (d !== b.dir && b.phase === 'out') b.legLeft = 0;   // 피해서 꺾었으면 이 변은 끝
+    b.dir = d; b.tgx = nx; b.tgz = nz;
+    if (b.phase === 'out') b.legLeft--;
+    return;
+  }
+
+  // 사방이 막혔다 — 뒤로라도 간다
+  const nx = b.gx + DIRS[back][0], nz = b.gz + DIRS[back][1];
+  b.dir = back;
+  b.tgx = Math.max(0, Math.min(GRID - 1, nx));
+  b.tgz = Math.max(0, Math.min(GRID - 1, nz));
 }
 
 function stepBot(b, dt) {
   if (!b.alive) return;
-  if (b.mode === 'idle') planBot(b);
+  if (b.phase === 'idle') { planBot(b); botPick(b); }
 
-  if (b.mode === 'out') {
-    b.legLeft -= BOT_SPEED * dt;
-    if (b.legLeft <= 0) {
-      b.legIdx++;
-      if (b.legIdx < b.legLen.length) {
-        b.heading += b.turn * Math.PI / 2;
-        b.legLeft = b.legLen[b.legIdx];
-      } else {
-        b.mode = 'home';
-      }
-    }
-  } else if (b.mode === 'home') {
-    const want = Math.atan2(b.homeZ - b.z, b.homeX - b.x);
-    let d = want - b.heading;
-    while (d > Math.PI) d -= Math.PI * 2;
-    while (d < -Math.PI) d += Math.PI * 2;
-    b.heading += Math.max(-2.2 * dt, Math.min(2.2 * dt, d));
+  const tx = wxOf(b.tgx), tz = wzOf(b.tgz);
+  const dx = tx - b.x, dz = tz - b.z;
+  const d = Math.hypot(dx, dz);
+  const step = BOT_SPEED * dt;
+
+  if (d <= step || d < 1e-4) {
+    b.x = tx; b.z = tz;
+    const had = b.trail.length;
+    stepCell(b, b.tgx, b.tgz);
+    if (!b.alive) return;
+    if (had > 0 && b.trail.length === 0) b.phase = 'idle';   // 점령 완료 → 새 계획
+    else botPick(b);
+  } else {
+    b.x += (dx / d) * step;
+    b.z += (dz / d) * step;
   }
-
-  // 벽에 박히지 않게 안쪽으로 튼다
-  const edge = HALF - 8;
-  if (Math.abs(b.x) > edge || Math.abs(b.z) > edge) {
-    const want = Math.atan2(-b.z, -b.x);
-    let d = want - b.heading;
-    while (d > Math.PI) d -= Math.PI * 2;
-    while (d < -Math.PI) d += Math.PI * 2;
-    b.heading += Math.max(-3 * dt, Math.min(3 * dt, d));
-  }
-
-  // 두 칸 앞이 자기 궤적이면 꺾는다 — 자살 방지
-  const ax = b.x + Math.cos(b.heading) * CELL * 2, az = b.z + Math.sin(b.heading) * CELL * 2;
-  const agx = gxOf(ax), agz = gzOf(az);
-  if (inGrid(agx, agz) && trail[agz * GRID + agx] === b.id) b.heading += b.turn * Math.PI / 2;
-
-  b.x += Math.cos(b.heading) * BOT_SPEED * dt;
-  b.z += Math.sin(b.heading) * BOT_SPEED * dt;
-  b.x = Math.max(-HALF + 1, Math.min(HALF - 1, b.x));
-  b.z = Math.max(-HALF + 1, Math.min(HALF - 1, b.z));
-
-  const before = b.trail.length;
-  stepCell(b, gxOf(b.x), gzOf(b.z));
-  if (b.alive && before > 0 && b.trail.length === 0) b.mode = 'idle';   // 점령 완료 → 새 계획
 }
 
 // ═══ 경기 초기화 ═════════════════════════════════════════
 function initMatch() {
   owner.fill(0); trail.fill(0);
   for (const e of ents) {
-    e.trail.length = 0; e.alive = true; e.respawn = 0; e.gx = -1; e.gz = -1; e.mode = 'idle';
+    e.trail.length = 0; e.alive = true; e.respawn = 0; e.gx = -1; e.gz = -1; e.phase = 'idle';
   }
   const q = GRID / 4;
   const starts = [[q * 2, q * 2], [q, q], [q * 3, q], [q * 2, q * 3]];
@@ -690,12 +809,14 @@ function initMatch() {
     giveBlock(e, gx | 0, gz | 0);
     e.x = wxOf(gx | 0); e.z = wzOf(gz | 0);
     e.gx = gx | 0; e.gz = gz | 0;
+    e.tgx = gx | 0; e.tgz = gz | 0;
   });
   paintAll();
   trailDirty = true;
   recount();
   matchTime = MATCH_SEC;
   matchOver = false;
+  feedEl.textContent = '';
   arena.spawn.set(me.x, EYE, me.z);
 }
 
@@ -797,6 +918,7 @@ function showScreen(name) {
   scoreEl.classList.toggle('on', name === 'game');
   timerEl.classList.toggle('on', name === 'game');
   mapEl.classList.toggle('on', name === 'game');
+  feedEl.classList.toggle('on', name === 'game');
   if (!in3d) { promptEl.classList.remove('on'); nearSpot = null; }
 
   if (name === 'game') { initMatch(); enterWorld('game'); }
@@ -941,6 +1063,26 @@ function toast(msg) {
   toastEl.classList.add('on');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toastEl.classList.remove('on'), 2200);
+}
+
+// ═══ 킬로그 ═════════════════════════════════════════════
+// "왜 갑자기 사라졌는지"가 안 보이면 버그처럼 느껴진다. 사유를 남겨 준다.
+const feedEl = document.getElementById('feed');
+
+function pushFeed(ent, reason) {
+  const row = document.createElement('div');
+  row.className = 'f';
+  const nm = document.createElement('span');
+  nm.className = 'nm';
+  nm.style.color = CSS_COLOR[ent.id - 1];
+  nm.textContent = ent.name;
+  const why = document.createElement('span');
+  why.className = 'why';
+  why.textContent = ' — ' + reason;
+  row.append(nm, why);
+  feedEl.prepend(row);
+  while (feedEl.children.length > 4) feedEl.lastChild.remove();
+  setTimeout(() => row.remove(), 6000);
 }
 
 // ═══ 로비 상호작용 ═══════════════════════════════════════
