@@ -92,7 +92,7 @@ git add . && git commit && git push origin main
 | **https://valuetopic.com/game/** | **반영 완료** — 실URL 200, 48,636 bytes |
 
 ## 새 커밋 해시
-- `__COMMIT__`
+- `0dd58b0`
 
 ## 알려진 버그 · 미완
 1. **봇끼리는 잘 안 만난다.** 사냥 반경이 15칸(22m)이라 넓은 맵에서 마주칠 일이 적다.
