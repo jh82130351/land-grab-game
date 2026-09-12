@@ -3,45 +3,88 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>땅따먹기 — 3D 평지 · 1인칭 이동</title>
+<title>땅따먹기 — 3D</title>
 <style>
-  :root{ --fg:#e8eaed; --dim:#9aa0a6; --key:#2b3038; }
+  :root{ --fg:#e8eaed; --dim:#9aa0a6; --key:#2b3038; --line:#2a2f38;
+         --panel:rgba(14,17,22,.92); --accent:#7fd18b; }
   *{box-sizing:border-box}
   html,body{height:100%}
   body{margin:0;overflow:hidden;background:#0b0d11;color:var(--fg);
        font-family:Pretendard,-apple-system,"Segoe UI",system-ui,sans-serif;
        -webkit-user-select:none;user-select:none}
   canvas{display:block}
+  button{font:inherit;color:inherit;cursor:pointer}
 
-  /* HUD */
-  #hud{position:fixed;left:0;right:0;bottom:0;padding:12px 16px;
-       display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;
+  /* ── 화면 공통 ───────────────────────────────── */
+  .screen{position:fixed;inset:0;z-index:10;display:none;
+          flex-direction:column;align-items:center;justify-content:center;
+          gap:18px;padding:24px;text-align:center;
+          background:rgba(8,10,14,.84);backdrop-filter:blur(3px)}
+  .screen.on{display:flex}
+  .screen h1{margin:0;font-size:clamp(28px,7vw,46px);letter-spacing:-.03em;font-weight:700}
+  .screen h2{margin:0;font-size:clamp(20px,5vw,28px);letter-spacing:-.02em;font-weight:700}
+  .screen p{margin:0;color:var(--dim);font-size:14px;line-height:1.8}
+
+  .btn{padding:14px 22px;min-width:230px;border-radius:10px;
+       border:1px solid var(--line);background:#161a21;
+       font-size:15px;font-weight:600;transition:.12s}
+  .btn:hover{background:#1e242d;border-color:#3a414d;transform:translateY(-1px)}
+  .btn:active{transform:none}
+  .btn.primary{background:#1d2a20;border-color:#33553a}
+  .btn.primary:hover{background:#243425}
+  .btn.ghost{min-width:0;padding:10px 16px;font-size:13px;font-weight:500;color:var(--dim)}
+  .btn.ghost:hover{color:var(--fg)}
+  .btn .sub{display:block;margin-top:3px;font-size:12px;font-weight:400;color:var(--dim)}
+  .btns{display:flex;flex-direction:column;gap:12px;margin-top:8px}
+
+  /* ── 로비 ────────────────────────────────────── */
+  #screen-lobby{justify-content:flex-start;padding-top:min(9vh,80px)}
+  .lobby{width:100%;max-width:520px;display:flex;flex-direction:column;gap:14px;text-align:left}
+  .lobby-top{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+  .notice{padding:11px 14px;border-radius:8px;font-size:13px;line-height:1.6;
+          border:1px solid #4a3a22;background:#231a10;color:#e6c88a}
+  .rooms{display:flex;flex-direction:column;gap:8px;
+         max-height:46vh;overflow-y:auto;padding-right:2px}
+  .room{display:flex;align-items:center;gap:12px;width:100%;text-align:left;
+        padding:13px 15px;border-radius:9px;border:1px solid var(--line);
+        background:#12151b;transition:.12s}
+  .room:hover{background:#181c24;border-color:#39414e}
+  .room .nm{flex:1;font-size:14px;font-weight:600}
+  .room .ppl{font-size:13px;color:var(--dim);font-variant-numeric:tabular-nums}
+  .room .st{font-size:11px;font-weight:600;padding:3px 9px;border-radius:99px;
+            border:1px solid var(--line);color:var(--dim)}
+  .room .st.wait{color:var(--accent);border-color:#33553a;background:#16231a}
+  .rooms-empty{padding:26px 14px;text-align:center;font-size:13px;color:var(--dim);
+               border:1px dashed var(--line);border-radius:9px}
+  .lobby-act{display:flex;gap:10px;justify-content:space-between;align-items:center}
+
+  /* ── 게임 HUD ────────────────────────────────── */
+  #hud{position:fixed;left:0;right:0;bottom:0;padding:12px 16px;z-index:5;
+       display:none;flex-wrap:wrap;gap:8px 18px;align-items:center;
        font-size:12px;color:var(--dim);pointer-events:none;
        background:linear-gradient(transparent,rgba(0,0,0,.55))}
+  #hud.on{display:flex}
   #hud b{color:var(--fg);font-weight:600;background:var(--key);
          border-radius:4px;padding:1px 6px;margin:0 1px}
   #stat{margin-left:auto;font-variant-numeric:tabular-nums;white-space:nowrap}
-  #stat .run{color:#7fd18b}
+  #stat .run{color:var(--accent)}
 
-  /* 조준점 */
-  #cross{position:fixed;left:50%;top:50%;width:14px;height:14px;
-         margin:-7px 0 0 -7px;pointer-events:none;opacity:.75}
+  #cross{position:fixed;left:50%;top:50%;width:14px;height:14px;z-index:5;
+         margin:-7px 0 0 -7px;pointer-events:none;opacity:.75;display:none}
+  #cross.on{display:block}
   #cross::before,#cross::after{content:"";position:absolute;background:#fff}
   #cross::before{left:6px;top:0;width:2px;height:14px}
   #cross::after{top:6px;left:0;height:2px;width:14px}
 
-  /* 시작 오버레이 */
-  #overlay{position:fixed;inset:0;display:flex;flex-direction:column;
-           align-items:center;justify-content:center;gap:14px;text-align:center;
-           padding:24px;background:rgba(8,10,14,.82);cursor:pointer;z-index:10}
-  #overlay.hide{display:none}
-  #overlay h1{margin:0;font-size:clamp(26px,6vw,40px);letter-spacing:-.02em}
-  #overlay p{margin:0;color:var(--dim);font-size:14px;line-height:1.8}
-  #overlay .cta{margin-top:6px;font-size:15px;color:var(--fg)}
-  #overlay .esc{font-size:12px}
+  /* ── 토스트 ──────────────────────────────────── */
+  #toast{position:fixed;left:50%;bottom:76px;transform:translate(-50%,10px);z-index:30;
+         padding:11px 18px;border-radius:8px;font-size:13px;
+         border:1px solid var(--line);background:var(--panel);
+         opacity:0;pointer-events:none;transition:.18s}
+  #toast.on{opacity:1;transform:translate(-50%,0)}
 
   #err{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
-       padding:24px;text-align:center;background:#0b0d11;z-index:20;font-size:14px;line-height:1.8}
+       padding:24px;text-align:center;background:#0b0d11;z-index:40;font-size:14px;line-height:1.8}
 </style>
 </head>
 <body>
@@ -53,17 +96,47 @@
   <span><b>Shift</b> 달리기</span>
   <span><b>Space</b> 점프</span>
   <span><b>마우스</b> 시점</span>
-  <span><b>ESC</b> 잠금 해제</span>
+  <span><b>ESC</b> 일시정지</span>
   <span id="stat"></span>
 </div>
 
-<div id="overlay">
+<!-- 시작화면 -->
+<section id="screen-menu" class="screen on">
   <h1>땅따먹기</h1>
-  <p>01단계 — 평지와 1인칭 이동만 있습니다<br>궤적·점령·봇은 다음 단계입니다</p>
-  <p class="cta">클릭하여 시작</p>
-  <p class="esc">시작하면 마우스가 화면에 잠깁니다 · ESC로 해제</p>
-</div>
+  <p>3D 영역 점령 게임 · 개발 중</p>
+  <div class="btns">
+    <button class="btn primary" id="btn-bot">봇과 플레이<span class="sub">혼자 연습 · 바로 시작</span></button>
+    <button class="btn" id="btn-online">온라인으로 플레이<span class="sub">방 목록에서 상대 찾기</span></button>
+  </div>
+</section>
 
+<!-- 온라인 로비 -->
+<section id="screen-lobby" class="screen">
+  <div class="lobby">
+    <div class="lobby-top">
+      <h2>온라인 로비</h2>
+      <button class="btn ghost" id="btn-refresh">새로고침</button>
+    </div>
+    <div class="notice">온라인 서버 미연결 — 08단계 예정입니다. 아래 목록은 화면 확인용 예시입니다.</div>
+    <div class="rooms" id="rooms"></div>
+    <div class="lobby-act">
+      <button class="btn ghost" id="btn-back">← 뒤로</button>
+      <button class="btn" id="btn-create" style="min-width:150px">방 만들기</button>
+    </div>
+  </div>
+</section>
+
+<!-- 일시정지 (게임 중 ESC) -->
+<section id="screen-pause" class="screen">
+  <h2>일시정지</h2>
+  <p>마우스 잠금이 해제되었습니다</p>
+  <div class="btns">
+    <button class="btn primary" id="btn-resume">계속하기</button>
+    <button class="btn" id="btn-tomenu">메뉴로 나가기</button>
+  </div>
+</section>
+
+<div id="toast"></div>
 <div id="err"></div>
 
 <script type="importmap">
@@ -146,26 +219,143 @@ const H = WORLD / 2 - 12;
   scene.add(p);
 });
 
+// ── 화면 상태 ────────────────────────────────────────────
+// 'menu' | 'lobby' | 'game'  — 게임 로직·WebSocket은 이 상태 위에 얹는다.
+const SCREENS = {
+  menu:  document.getElementById('screen-menu'),
+  lobby: document.getElementById('screen-lobby'),
+  pause: document.getElementById('screen-pause'),
+};
+const hudEl   = document.getElementById('hud');
+const crossEl = document.getElementById('cross');
+
+let screen = 'menu';   // 현재 화면
+let paused = false;    // game 화면에서 포인터 잠금이 풀린 상태
+
+function showScreen(name) {
+  screen = name;
+  paused = false;
+  for (const k in SCREENS) SCREENS[k].classList.toggle('on', k === name);
+  const inGame = name === 'game';
+  hudEl.classList.toggle('on', inGame);
+  crossEl.classList.toggle('on', inGame);
+  if (!inGame) releaseLock();
+  if (name === 'lobby') renderRooms();
+}
+
+function showPause(on) {
+  paused = on;
+  SCREENS.pause.classList.toggle('on', on);
+  crossEl.classList.toggle('on', !on);
+}
+
+// ── 포인터 잠금 ──────────────────────────────────────────
+let locked = false;
+
+function requestLock() {
+  const r = renderer.domElement.requestPointerLock();
+  // 일부 브라우저는 Promise를 준다. ESC 직후 재잠금은 쿨다운으로 거부될 수 있다.
+  if (r && typeof r.catch === 'function') r.catch(() => toast('잠시 후 다시 시도하세요'));
+}
+
+function releaseLock() {
+  if (document.pointerLockElement) document.exitPointerLock();
+}
+
+document.addEventListener('pointerlockchange', () => {
+  locked = document.pointerLockElement === renderer.domElement;
+  if (!locked) clearKeys();
+  if (screen === 'game') showPause(!locked);
+});
+
+// ── 토스트 ───────────────────────────────────────────────
+const toastEl = document.getElementById('toast');
+let toastTimer = 0;
+
+function toast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('on'), 2000);
+}
+
+// ── 로비 (UI 셸 — 실제 서버 연결은 08단계) ───────────────
+const DUMMY_ROOMS = [
+  { id: 'r1', name: '연습방', players: 1, max: 2, state: 'wait' },
+  { id: 'r2', name: '빠른대전', players: 2, max: 2, state: 'play' },
+];
+
+const roomsEl = document.getElementById('rooms');
+
+function renderRooms() {
+  roomsEl.textContent = '';
+  if (DUMMY_ROOMS.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'rooms-empty';
+    empty.textContent = '열린 방이 없습니다';
+    roomsEl.appendChild(empty);
+    return;
+  }
+  for (const r of DUMMY_ROOMS) {
+    const b = document.createElement('button');
+    b.className = 'room';
+    b.type = 'button';
+
+    const nm = document.createElement('span');
+    nm.className = 'nm';
+    nm.textContent = r.name;
+
+    const ppl = document.createElement('span');
+    ppl.className = 'ppl';
+    ppl.textContent = r.players + ' / ' + r.max;
+
+    const st = document.createElement('span');
+    st.className = 'st' + (r.state === 'wait' ? ' wait' : '');
+    st.textContent = r.state === 'wait' ? '대기' : '진행';
+
+    b.append(nm, ppl, st);
+    b.addEventListener('click', () => toast('온라인 대전 준비 중입니다'));
+    roomsEl.appendChild(b);
+  }
+}
+
+// ── 버튼 연결 ────────────────────────────────────────────
+document.getElementById('btn-bot').addEventListener('click', () => {
+  showScreen('game');
+  requestLock();
+  // 잠금 요청이 거부되면 pointerlockchange가 안 온다 → 빈 화면에 갇히지 않도록 확인
+  setTimeout(() => { if (screen === 'game' && !locked) showPause(true); }, 500);
+});
+document.getElementById('btn-online').addEventListener('click', () => showScreen('lobby'));
+document.getElementById('btn-back').addEventListener('click', () => showScreen('menu'));
+document.getElementById('btn-create').addEventListener('click', () => toast('방 만들기 준비 중입니다'));
+document.getElementById('btn-refresh').addEventListener('click', () => {
+  renderRooms();
+  toast('온라인 서버 미연결 — 예시 목록입니다');
+});
+document.getElementById('btn-resume').addEventListener('click', requestLock);
+document.getElementById('btn-tomenu').addEventListener('click', () => showScreen('menu'));
+
 // ── 입력 ─────────────────────────────────────────────────
 const keys = Object.create(null);
 let yaw = 0, pitch = 0;
-let locked = false;
+
+function clearKeys() { for (const k in keys) keys[k] = false; }
 
 addEventListener('keydown', (e) => {
+  if (e.code === 'Escape') {
+    // game 화면의 ESC는 보통 브라우저가 포인터 잠금 해제로 처리한다 (pointerlockchange에서 받음).
+    // 잠금이 애초에 안 걸린 경우엔 그 이벤트가 안 오므로 여기서 직접 일시정지를 띄운다.
+    if (screen === 'lobby') showScreen('menu');
+    else if (screen === 'game' && !locked) showPause(true);
+    return;
+  }
+  if (screen !== 'game' || paused) return;
   keys[e.code] = true;
   if (e.code === 'Space') e.preventDefault();   // 페이지 스크롤 방지
 });
 addEventListener('keyup', (e) => { keys[e.code] = false; });
-addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
-
-const overlay = document.getElementById('overlay');
-overlay.addEventListener('click', () => renderer.domElement.requestPointerLock());
-
-document.addEventListener('pointerlockchange', () => {
-  locked = document.pointerLockElement === renderer.domElement;
-  overlay.classList.toggle('hide', locked);
-  if (!locked) for (const k in keys) keys[k] = false;   // 해제 순간 키 고착 방지
-});
+addEventListener('blur', clearKeys);
 
 document.addEventListener('mousemove', (e) => {
   if (!locked) return;
@@ -239,7 +429,7 @@ let hudAt = 0, frames = 0, fpsAt = 0, fps = 0;
 function drawHud(now, s) {
   frames++;
   if (now - fpsAt >= 500) { fps = Math.round((frames * 1000) / (now - fpsAt)); frames = 0; fpsAt = now; }
-  if (now - hudAt < 100) return;
+  if (screen !== 'game' || now - hudAt < 100) return;
   hudAt = now;
   stat.innerHTML =
     'x ' + pos.x.toFixed(1) + ' · z ' + pos.z.toFixed(1) + ' · y ' + (pos.y - EYE).toFixed(1) +
@@ -249,17 +439,23 @@ function drawHud(now, s) {
 }
 
 // ── 루프 ─────────────────────────────────────────────────
+// 메뉴·로비에서도 씬은 계속 그린다 (뒤 배경으로 보이는 편이 낫다).
+// 플레이어 갱신은 game 화면 + 포인터 잠금 상태에서만.
 let prev = performance.now();
 
 function loop(now) {
   requestAnimationFrame(loop);
   const dt = Math.min((now - prev) / 1000, MAXDT);
   prev = now;
-  const s = locked ? update(dt) : { running: false, speed: 0 };
+  const active = screen === 'game' && locked;
+  const s = active ? update(dt) : { running: false, speed: 0 };
   drawHud(now, s);
   renderer.render(scene, camera);
 }
 requestAnimationFrame(loop);
+
+// 첫 화면
+showScreen('menu');
 
 // 로딩 실패를 조용히 넘기지 않는다
 addEventListener('error', (e) => {
