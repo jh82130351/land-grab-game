@@ -16,7 +16,9 @@
                                       win  60|null      승리 점령률(%)
     {t:'join', room}                  방 입장
     {t:'leave'}                       방 퇴장
-    {t:'relay', data}                 같은 방 상대에게 그대로 전달 (게임 상태 자리)
+    {t:'relay', data}                 같은 방 상대 전원에게 그대로 전달 (게임 상태)
+    {t:'start_game'}                  방장만. 방을 진행 상태로 바꾸고 전원에게 알린다
+    {t:'end_game'}                    방장만. 대기 상태로 되돌린다
     {t:'ping', ts}                    왕복 지연 측정
   서버 → 클라
     {t:'welcome', id, name}           내 접속 id
@@ -24,6 +26,8 @@
     {t:'joined', room, you}           입장 성공. you = 'host' | 'guest'
     {t:'room_update', room, members}  방 인원·설정 변화 (같은 방 전원에게)
     {t:'host_changed', host, name}    방장 위임 알림 (같은 방 전원에게)
+    {t:'game_start', room, members}   경기 시작 (같은 방 전원에게)
+    {t:'game_end', room}              경기 종료/해제
     {t:'peer', event, id, name}       상대 입장/퇴장 알림. event = 'join' | 'leave'
     {t:'left'}                        내 퇴장 확인
     {t:'error', msg}                  거절 사유
@@ -92,6 +96,7 @@ class Room:
         self.name = name
         self.host = host_id       # 방장 = 게임 계산 주체
         self.members = [host_id]
+        self.playing = False      # 경기 진행 중인가
         self.cap = cap            # 정원 2~4
         self.secs = secs          # 제한시간(초)
         self.win = win            # 승리 점령률(%) 또는 None
@@ -103,6 +108,8 @@ class Room:
 
     @property
     def state(self):
+        if self.playing:
+            return 'playing'
         return 'play' if self.full else 'wait'
 
     def info(self):
@@ -178,6 +185,8 @@ async def leave_room(client, notify=True):
         rooms.pop(rid, None)
         log.info('방 삭제 %s (%s)', rid, room.name)
     else:
+        if room.playing and not room.full:
+            room.playing = False   # 한 명이라도 빠지면 경기 유지 불가
         # 방장이 나가면 남은 사람이 방장이 된다 (방은 해체하지 않는다)
         handed = False
         if room.host == client.id:
@@ -262,6 +271,34 @@ async def handle(client, msg):
         await client.send({'t': 'left'})
         await client.send({'t': 'room_list', 'rooms': room_list()})
 
+    elif t == 'start_game':
+        room = rooms.get(client.room)
+        if not room:
+            return
+        if room.host != client.id:
+            await client.send({'t': 'error', 'msg': '방장만 시작할 수 있습니다.'})
+            return
+        if not room.full:
+            await client.send({'t': 'error', 'msg': '정원이 차야 시작할 수 있습니다.'})
+            return
+        room.playing = True
+        log.info('경기 시작 %s "%s" (%d명)', room.id, room.name, len(room.members))
+        msg = {'t': 'game_start', 'room': room.info(), 'members': room.members_info()}
+        await asyncio.gather(*[clients[cid].send(msg) for cid in room.members if cid in clients],
+                             return_exceptions=True)
+        await push_room_list()
+
+    elif t == 'end_game':
+        room = rooms.get(client.room)
+        if not room or room.host != client.id:
+            return
+        room.playing = False
+        log.info('경기 종료 %s "%s"', room.id, room.name)
+        msg = {'t': 'game_end', 'room': room.info()}
+        await asyncio.gather(*[clients[cid].send(msg) for cid in room.members if cid in clients],
+                             return_exceptions=True)
+        await push_room_list()
+
     elif t == 'relay':
         # 마일스톤 C용 — 같은 방의 상대에게 그대로 넘긴다. 서버는 내용을 보지 않는다.
         room = rooms.get(client.room)
@@ -293,7 +330,7 @@ async def handler(ws):
 
     try:
         async for raw in ws:
-            if len(raw) > 64_000:          # 비정상적으로 큰 프레임은 버린다
+            if len(raw) > 900_000:         # 비정상적으로 큰 프레임은 버린다
                 continue
             try:
                 msg = json.loads(raw)
@@ -332,7 +369,7 @@ async def main():
         except NotImplementedError:
             pass
 
-    async with serve(handler, HOST, PORT, ping_interval=20, ping_timeout=20, max_size=128_000):
+    async with serve(handler, HOST, PORT, ping_interval=20, ping_timeout=20, max_size=1_000_000):
         log.info('WS 서버 시작 — ws://%s:%d%s', HOST, PORT, WS_PATH)
         await stop
     log.info('WS 서버 종료')

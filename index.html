@@ -246,6 +246,7 @@ const FIELD = GRID * CELL;      // 맵 물리 크기 300m
 const HALF  = FIELD / 2;
 const TOTAL = GRID * GRID;
 
+const TRAIL_CAP = 320;          // 궤적 최대 길이(셀) = 480m. 밸런스 핵심 — 09 문서 참조
 const MATCH_SEC = 180;          // 제한시간 3분
 const WIN_SHARE = 0.60;         // 60% 도달 시 즉시 종료
 const RESPAWN_SEC = 1.5;        // 사망 후 리스폰 대기
@@ -306,14 +307,11 @@ function makeLabel(title, sub, accent) {
 }
 
 // ═══ 참가자 정의 ═════════════════════════════════════════
-// id 1 = 플레이어, 2~4 = 봇. 색은 RGB 배열 (격자 텍스처·미니맵·3D 모두 같은 값을 쓴다)
-const SPECS = [
-  { id: 1, name: '나',    rgb: [ 82, 162, 255], bot: false },
-  { id: 2, name: '봇 A',  rgb: [255,  99,  99], bot: true  },
-  { id: 3, name: '봇 B',  rgb: [255, 201,  84], bot: true  },
-  { id: 4, name: '봇 C',  rgb: [138, 226, 130], bot: true  },
-];
-const CSS_COLOR = SPECS.map((s) => 'rgb(' + s.rgb.join(',') + ')');
+// 슬롯 색은 고정이다. 격자 텍스처·미니맵·3D·점수판이 모두 같은 값을 쓴다.
+// 슬롯 번호(1~4)가 곧 격자 배열에 저장되는 소유자 id다.
+const SLOT_RGB = [[82, 162, 255], [255, 99, 99], [255, 201, 84], [138, 226, 130]];
+const CSS_COLOR = SLOT_RGB.map((c) => 'rgb(' + c.join(',') + ')');
+const SPECS = SLOT_RGB.map((rgb, k) => ({ id: k + 1, rgb }));   // 텍스처 칠하기용
 
 // ═══ 격자 상태 ═══════════════════════════════════════════
 const owner = new Uint8Array(TOTAL);   // 0 = 빈 땅, 1~4 = 소유자 id
@@ -329,6 +327,8 @@ gridTex.colorSpace = THREE.SRGBColorSpace;
 gridTex.anisotropy = MAXANISO;
 
 let texDirty = false, trailDirty = false;
+let collectDirty = false;              // 방장일 때만 켠다
+const dirtySet = new Set();            // 아직 안 보낸 변경 셀
 
 // 격자 좌표 ↔ 월드 좌표
 const gxOf = (x) => Math.floor((x + HALF) / CELL);
@@ -357,9 +357,16 @@ function paint(i) {
   }
   pix[p] = r; pix[p + 1] = g; pix[p + 2] = b; pix[p + 3] = 255;
   texDirty = true;
+  if (collectDirty) dirtySet.add(i);   // 온라인: 방장이 이 목록을 게스트에게 보낸다
 }
 
-function paintAll() { for (let i = 0; i < TOTAL; i++) paint(i); }
+function paintAll() {
+  const keep = collectDirty;
+  collectDirty = false;                // 4만 칸을 통째로 큐에 넣으면 안 된다
+  for (let i = 0; i < TOTAL; i++) paint(i);
+  collectDirty = keep;
+  dirtySet.clear();
+}
 
 // ═══ 월드 1: 경기장 ══════════════════════════════════════
 function buildArena() {
@@ -547,16 +554,23 @@ const arena = WORLDS.game;
 let world = arena;
 
 // ═══ 참가자 상태 ═════════════════════════════════════════
-const ents = SPECS.map((s) => ({
-  id: s.id, name: s.name, bot: s.bot, rgb: s.rgb,
-  x: 0, z: 0, gx: -1, gz: -1,
-  alive: true, respawn: 0, trail: [], cells: 0,
-  dir: 0, tgx: 0, tgz: 0, phase: 'idle', turn: 1, legIdx: 0, legs: [0, 0, 0], legLeft: 0,
-  preyGx: 0, preyGz: 0, preyI: undefined,
-  homeX: 0, homeZ: 0, homeGx: 0, homeGz: 0,
-}));
-const me = ents[0];
+// 봇전이면 [나 + 봇 3], 온라인이면 방 참가자 N명으로 매 경기 새로 만든다.
+function makeEnt(slot, name, bot, netId) {
+  return {
+    id: slot, name, bot, netId: netId || null, rgb: SLOT_RGB[slot - 1],
+    x: 0, z: 0, gx: -1, gz: -1,
+    alive: true, respawn: 0, trail: [], cells: 0, deaths: 0,
+    dir: 0, tgx: 0, tgz: 0, phase: 'idle', turn: 1, legIdx: 0, legs: [0, 0, 0], legLeft: 0,
+    preyGx: 0, preyGz: 0, preyI: undefined,
+    homeX: 0, homeZ: 0, homeGx: 0, homeGz: 0,
+  };
+}
 
+let ents = [makeEnt(1, '나', false)];
+let me = ents[0];
+
+let matchSecs = MATCH_SEC;      // 이번 경기 제한시간 (방 설정에서 온다)
+let matchWin = WIN_SHARE;       // 이번 경기 승리 점령률 (0이면 시간 종료까지)
 let matchTime = MATCH_SEC, matchOver = false;
 
 // ═══ 격자 로직 ═══════════════════════════════════════════
@@ -617,7 +631,7 @@ function capture(ent) {
       if (trail[i]) {               // 남의 궤적을 가둬버린 경우 — 그 주인은 죽는다
         const victim = ents[trail[i] - 1];
         trail[i] = 0;
-        if (victim.alive) kill(victim, ent, ent.name + '에게 포위당함');
+        if (victim && victim.alive) kill(victim, ent, ent.name + '에게 포위당함');
       }
       paint(i);
       gained++;
@@ -628,8 +642,9 @@ function capture(ent) {
 }
 
 function kill(ent, by, why) {
-  if (!ent.alive) return;
+  if (!ent || !ent.alive) return;
   ent.alive = false;
+  ent.deaths++;
   ent.respawn = RESPAWN_SEC;
   clearTrailOf(ent);
   clearOwnedOf(ent);
@@ -638,6 +653,7 @@ function kill(ent, by, why) {
   const reason = why || (by === ent ? '자기 궤적에 걸림'
                        : by ? by.name + '에게 잡힘' : '사망');
   pushFeed(ent, reason);
+  if (online && iamHost) pendingFeed.push([ent.id, reason]);
   if (ent === me) toast(reason);
   else if (by === me) toast(ent.name + '을(를) 잡았습니다');
 }
@@ -691,7 +707,9 @@ function stepCell(ent, gx, gz) {
 
   const t = trail[i];
   if (t) {                                  // 궤적을 밟았다 → 그 궤적 주인이 죽는다
-    kill(ents[t - 1], ent, t === ent.id ? '자기 궤적에 걸림' : ent.name + '에게 잡힘');
+    const victim = ents[t - 1];
+    if (victim) kill(victim, ent, t === ent.id ? '자기 궤적에 걸림' : ent.name + '에게 잡힘');
+    else { trail[i] = 0; paint(i); }        // 주인이 없는 궤적은 지운다
     if (!ent.alive) return;                 // 자기 궤적이었다면 본인이 죽은 것
   }
 
@@ -702,12 +720,18 @@ function stepCell(ent, gx, gz) {
     ent.trail.push(i);
     paint(i);
     trailDirty = true;
+    // 한 번에 너무 크게 두르지 못하게 막는다. 이게 없으면 맵 외곽을 한 바퀴 돌아
+    // 한 방에 전부 먹는 수가 생긴다 (09 문서에 근거).
+    if (ent.trail.length >= TRAIL_CAP) kill(ent, ent, '궤적이 너무 길어 끊어짐');
   }
 }
 
 function recount() {
   for (const e of ents) e.cells = 0;
-  for (let i = 0; i < TOTAL; i++) { const o = owner[i]; if (o) ents[o - 1].cells++; }
+  for (let i = 0; i < TOTAL; i++) {
+    const e = owner[i] ? ents[owner[i] - 1] : null;   // 없는 슬롯 값이 섞여도 죽지 않게
+    if (e) e.cells++;
+  }
 }
 
 function share(ent) { return ent.cells / TOTAL; }
@@ -864,13 +888,25 @@ function stepBot(b, dt) {
 }
 
 // ═══ 경기 초기화 ═════════════════════════════════════════
-function initMatch() {
-  owner.fill(0); trail.fill(0);
-  for (const e of ents) {
-    e.trail.length = 0; e.alive = true; e.respawn = 0; e.gx = -1; e.gz = -1; e.phase = 'idle';
-  }
+// 시작 위치는 참가 인원에 따라 정해진다. 온라인에서도 전원이 같은 배치를 쓰도록
+// 인원 수만 맞으면 어느 클라이언트가 계산해도 결과가 같다.
+function startCells(n) {
   const q = GRID / 4;
-  const starts = [[q * 2, q * 2], [q, q], [q * 3, q], [q * 2, q * 3]];
+  if (n <= 2) return [[q, q * 2], [q * 3, q * 2]];
+  if (n === 3) return [[q * 2, q], [q, q * 3], [q * 3, q * 3]];
+  return [[q, q], [q * 3, q], [q, q * 3], [q * 3, q * 3]];
+}
+
+function initMatch(defs, secs, win) {
+  ents = (defs || [{ name: '나', bot: false }]).slice(0, 4)
+    .map((d, k) => makeEnt(k + 1, d.name, !!d.bot, d.netId));
+  me = ents.find((e) => e.netId ? e.netId === myId : !e.bot) || ents[0];
+
+  matchSecs = secs || MATCH_SEC;
+  matchWin = win === undefined ? WIN_SHARE : win;
+
+  owner.fill(0); trail.fill(0);
+  const starts = startCells(ents.length);
   ents.forEach((e, k) => {
     const [gx, gz] = starts[k];
     giveBlock(e, gx | 0, gz | 0);
@@ -881,7 +917,8 @@ function initMatch() {
   paintAll();
   trailDirty = true;
   recount();
-  matchTime = MATCH_SEC;
+  buildScoreRows();
+  matchTime = matchSecs;
   matchOver = false;
   feedEl.textContent = '';
   arena.spawn.set(me.x, EYE, me.z);
@@ -890,20 +927,21 @@ function initMatch() {
 // ═══ 3D 반영 ═════════════════════════════════════════════
 const dummy = new THREE.Object3D();
 
+// 격자를 그대로 훑는다. 참가자별 trail 배열을 쓰면 게스트에서는 만들 수 없다
+// (게스트는 셀 변경분만 받는다). 40,000칸 순회는 1ms 미만이고 궤적이 바뀔 때만 돈다.
 function syncTrailMesh() {
   const mesh = arena.trailMesh;
   let n = 0;
-  for (const e of ents) {
-    const c = e.rgb;
-    for (const i of e.trail) {
-      if (n >= arena.cap) break;
-      const gz = (i / GRID) | 0, gx = i - gz * GRID;
-      dummy.position.set(wxOf(gx), 0.45, wzOf(gz));
-      dummy.updateMatrix();
-      mesh.setMatrixAt(n, dummy.matrix);
-      mesh.instanceColor.setXYZ(n, c[0] / 255, c[1] / 255, c[2] / 255);
-      n++;
-    }
+  for (let i = 0; i < TOTAL && n < arena.cap; i++) {
+    const t = trail[i];
+    if (!t) continue;
+    const c = SLOT_RGB[t - 1];
+    const gz = (i / GRID) | 0, gx = i - gz * GRID;
+    dummy.position.set(wxOf(gx), 0.45, wzOf(gz));
+    dummy.updateMatrix();
+    mesh.setMatrixAt(n, dummy.matrix);
+    mesh.instanceColor.setXYZ(n, c[0] / 255, c[1] / 255, c[2] / 255);
+    n++;
   }
   mesh.count = n;
   mesh.instanceMatrix.needsUpdate = true;
@@ -912,7 +950,8 @@ function syncTrailMesh() {
 
 function syncBodies() {
   arena.bodies.forEach((m, k) => {
-    const e = ents[k];
+    const e = ents[k];                 // 참가자가 4명 미만이면 빈 슬롯이 생긴다
+    if (!e) { m.visible = false; return; }
     m.visible = e.alive && e !== me;
     if (m.visible) m.position.set(e.x, 1.1, e.z);
   });
@@ -992,10 +1031,14 @@ function showScreen(name) {
   feedEl.classList.toggle('on', name === 'game');
   if (!in3d) { promptEl.classList.remove('on'); nearSpot = null; }
 
-  if (name === 'game') { initMatch(); enterWorld('game'); }
+  if (name === 'game') {
+    if (!online) initMatch([{ name: '나' }, { name: '봇 A', bot: true },
+                            { name: '봇 B', bot: true }, { name: '봇 C', bot: true }]);
+    enterWorld('game');
+  }
   else if (name === 'lobby') enterWorld('lobby');
   else releaseLock();
-  if (name === 'menu') netClose();
+  if (name === 'menu') { netEndMatch(); netClose(); }
 }
 
 function showPause(on) {
@@ -1058,12 +1101,17 @@ function movePlayer(dt) {
 // ═══ 경기 진행 ═══════════════════════════════════════════
 function stepMatch(dt) {
   if (matchOver) return;
+  if (online && !iamHost) return;      // 게스트는 방장이 보낸 결과만 그린다
 
   if (me.alive) {
     me.x = pos.x; me.z = pos.z;
     stepCell(me, gxOf(pos.x), gzOf(pos.z));
   }
-  for (let k = 1; k < ents.length; k++) stepBot(ents[k], dt);
+  for (const e of ents) {
+    if (e === me || !e.alive) continue;
+    if (e.bot) stepBot(e, dt);
+    else stepCell(e, gxOf(e.x), gzOf(e.z));   // 온라인 상대 — 본인이 보고한 위치로 판정
+  }
 
   for (const e of ents) {
     if (e.alive) continue;
@@ -1073,18 +1121,29 @@ function stepMatch(dt) {
 
   matchTime -= dt;
   const leader = ents.reduce((a, b) => (b.cells > a.cells ? b : a), ents[0]);
-  if (matchTime <= 0 || share(leader) >= WIN_SHARE) endMatch(leader);
+  if (matchTime <= 0 || (matchWin > 0 && share(leader) >= matchWin)) endMatch(leader);
 }
 
 function endMatch() {
+  if (matchOver) return;
   matchOver = true;
   recount();
+
+  if (online && iamHost) {
+    const cells = [];
+    for (const i of dirtySet) cells.push(i, owner[i] | (trail[i] << 3));
+    dirtySet.clear();
+    send({ t: 'relay', data: { k: 'e', t: 0, e: entPayload(), c: cells } });
+    send({ t: 'end_game' });
+  }
   const rank = ents.slice().sort((a, b) => b.cells - a.cells);
   const winner = rank[0];
 
   document.getElementById('result-title').textContent = winner === me ? '승리!' : '패배';
-  document.getElementById('result-sub').textContent =
-    matchTime <= 0 ? '제한시간 종료' : winner.name + ' 이(가) 60%를 점령했습니다';
+  document.getElementById('result-sub').textContent = matchTime <= 0
+    ? '제한시간 종료'
+    : winner.name + ' 이(가) ' + Math.round(matchWin * 100) + '%를 점령했습니다';
+  document.getElementById('btn-result-menu').textContent = online ? '방 나가기' : '메뉴로';
 
   const list = document.getElementById('result-rank');
   list.textContent = '';
@@ -1135,6 +1194,110 @@ function toast(msg) {
   toastEl.classList.add('on');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toastEl.classList.remove('on'), 2200);
+}
+
+// ═══ 온라인 대전 (host-authoritative) ════════════════════
+// 방장이 전부 계산하고, 서버는 중계만 한다. 게스트는 자기 입력만 올리고 결과를 그린다.
+//   방장 → 전원 : {k:'s'} 상태 스냅샷 (약 18Hz)
+//   게스트 → 방장 : {k:'i'} 내 위치
+//   방장 → 전원 : {k:'e'} 종료
+const TICK_MS = 55;              // 약 18Hz. 정확성 우선이라 보간은 넣지 않았다
+const CELLS_PER_TICK = 2500;     // 한 번에 보낼 셀 상한 (큰 점령은 여러 틱에 나눠 보낸다)
+
+let online = false;              // 온라인 경기 중인가
+let pendingFeed = [];            // 방장이 아직 안 보낸 킬로그
+let tickAt = 0;
+
+function entBySlot(id) { return ents.find((e) => e.id === id); }
+
+function entPayload() {
+  return ents.map((e) => [e.id, Math.round(e.x * 20) / 20, Math.round(e.z * 20) / 20,
+                          e.alive ? 1 : 0, e.cells, e.deaths]);
+}
+
+function netStartMatch(room, members) {
+  online = true;
+  iamHost = room.host === myId;
+  const defs = members.map((m) => ({ name: m.name, netId: m.id }));
+  initMatch(defs, room.secs, room.win ? room.win / 100 : 0);
+  collectDirty = iamHost;
+  dirtySet.clear();
+  pendingFeed = [];
+  tickAt = 0;
+  enter3d('game');
+  toast(iamHost ? '경기 시작 — 내가 방장(계산 담당)입니다' : '경기 시작');
+}
+
+function netEndMatch() {
+  online = false;
+  collectDirty = false;
+  dirtySet.clear();
+}
+
+// 방장: 상태를 모아 보낸다
+function hostTick(now) {
+  if (now - tickAt < TICK_MS) return;
+  tickAt = now;
+
+  const cells = [];
+  if (dirtySet.size) {
+    let n = 0;
+    for (const i of dirtySet) {
+      cells.push(i, owner[i] | (trail[i] << 3));
+      dirtySet.delete(i);
+      if (++n >= CELLS_PER_TICK) break;
+    }
+  }
+
+  const payload = { k: 's', t: Math.max(0, matchTime), e: entPayload(), c: cells };
+  if (pendingFeed.length) { payload.f = pendingFeed; pendingFeed = []; }
+  send({ t: 'relay', data: payload });
+}
+
+// 게스트: 내 위치를 올린다
+function guestTick(now) {
+  if (now - tickAt < TICK_MS) return;
+  tickAt = now;
+  send({ t: 'relay', data: { k: 'i', x: Math.round(pos.x * 20) / 20, z: Math.round(pos.z * 20) / 20 } });
+}
+
+// 게스트: 방장이 보낸 상태를 그대로 반영한다
+function applyState(d) {
+  matchTime = d.t;
+  for (const a of d.e) {
+    const e = entBySlot(a[0]);
+    if (!e) continue;
+    const [, x, z, alive, cells, deaths] = a;
+    e.cells = cells;
+    e.alive = !!alive;
+    if (e === me) {
+      if (deaths !== e.deaths) {        // 방장이 나를 죽였다 → 그 자리로 옮겨간다
+        e.deaths = deaths;
+        pos.set(x, EYE, z); vel.set(0, 0, 0);
+        camera.position.copy(pos);
+      }
+      e.x = pos.x; e.z = pos.z;
+    } else {
+      e.x = x; e.z = z; e.deaths = deaths;
+    }
+  }
+  if (d.c && d.c.length) {
+    for (let k = 0; k < d.c.length; k += 2) {
+      const i = d.c[k], v = d.c[k + 1];
+      owner[i] = v & 7;
+      trail[i] = (v >> 3) & 7;
+      paint(i);
+    }
+    trailDirty = true;
+  }
+  if (d.f) for (const [slot, why] of d.f) { const e = entBySlot(slot); if (e) pushFeed(e, why); }
+}
+
+// 방장: 상대가 보낸 위치를 반영한다
+function applyInput(fromId, d) {
+  const e = ents.find((x) => x.netId === fromId);
+  if (!e || !e.alive) return;
+  e.x = d.x; e.z = d.z;
 }
 
 // ═══ 킬로그 ═════════════════════════════════════════════
@@ -1229,10 +1392,31 @@ function onNet(m) {
     updateRoomPanel(m.room, m.members);
   }
   else if (m.t === 'host_changed') {
+    const wasOnlineMatch = online && !matchOver;
     iamHost = m.host === myId;
     toast(iamHost ? '내가 방장이 되었습니다' : m.name + ' 님이 방장이 되었습니다');
+    if (wasOnlineMatch) {
+      // 계산 담당이 나갔다. 이어받을 상태가 없으므로 거기서 끝낸다.
+      toast('방장이 나가 경기가 종료되었습니다');
+      endMatch();
+    }
   }
-  else if (m.t === 'peer') toast(m.name + (m.event === 'join' ? ' 님이 들어왔습니다' : ' 님이 나갔습니다'));
+  else if (m.t === 'peer') {
+    toast(m.name + (m.event === 'join' ? ' 님이 들어왔습니다' : ' 님이 나갔습니다'));
+    if (online && m.event === 'leave') {
+      const e = ents.find((x) => x.netId === m.id);
+      if (e && e.alive) { e.alive = false; e.respawn = 1e9; clearTrailOf(e); recount(); pushFeed(e, '접속 종료'); }
+    }
+  }
+  else if (m.t === 'game_start') netStartMatch(m.room, m.members);
+  else if (m.t === 'game_end') { if (online && !matchOver) { netEndMatch(); toast('경기가 종료되었습니다'); showScreen('room'); } }
+  else if (m.t === 'relay') {
+    const d = m.data;
+    if (!d || !online) return;
+    if (d.k === 's' && !iamHost) applyState(d);
+    else if (d.k === 'i' && iamHost) applyInput(m.from, d);
+    else if (d.k === 'e' && !iamHost) { applyState(d); endMatch(); }
+  }
   else if (m.t === 'left') myRoom = null;
   else if (m.t === 'error') toast(m.msg);
 }
@@ -1349,6 +1533,7 @@ function submitCreate() {
 }
 
 function leaveRoom() {
+  netEndMatch();
   send({ t: 'leave' });
   myRoom = null;
   enter3d('lobby');
@@ -1389,7 +1574,7 @@ document.getElementById('btn-create-ok').addEventListener('click', submitCreate)
 startBtn.addEventListener('click', () => {
   if (!myRoom) return;
   if (myRoom.players < myRoom.max) { toast('아직 정원이 차지 않았습니다 (' + myRoom.players + '/' + myRoom.max + ')'); return; }
-  toast('게임 동기화는 다음 단계입니다');
+  send({ t: 'start_game' });
 });
 document.getElementById('btn-create-cancel').addEventListener('click', () => enter3d('lobby'));
 createField.addEventListener('keydown', (e) => {
@@ -1399,8 +1584,18 @@ createField.addEventListener('keydown', (e) => {
 });
 document.getElementById('btn-resume').addEventListener('click', requestLock);
 document.getElementById('btn-tomenu').addEventListener('click', () => showScreen('menu'));
-document.getElementById('btn-again').addEventListener('click', () => enter3d('game'));
-document.getElementById('btn-result-menu').addEventListener('click', () => showScreen('menu'));
+document.getElementById('btn-again').addEventListener('click', () => {
+  if (online) {
+    if (iamHost) send({ t: 'start_game' });
+    else toast('방장이 다시 시작할 수 있습니다');
+    return;
+  }
+  enter3d('game');
+});
+document.getElementById('btn-result-menu').addEventListener('click', () => {
+  if (online) { netEndMatch(); leaveRoom(); return; }
+  showScreen('menu');
+});
 
 // ═══ 입력 ════════════════════════════════════════════════
 const keys = Object.create(null);
@@ -1440,17 +1635,22 @@ addEventListener('resize', () => {
 // ═══ HUD ═════════════════════════════════════════════════
 const stat = document.getElementById('stat');
 let hudAt = 0, frames = 0, fpsAt = 0, fps = 0;
-const scoreRows = ents.map((e) => {
-  const row = document.createElement('div');
-  row.className = 'r' + (e === me ? ' me' : '');
-  const dot = document.createElement('span'); dot.className = 'dot';
-  dot.style.background = CSS_COLOR[e.id - 1];
-  const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = e.name;
-  const pc = document.createElement('span'); pc.className = 'pc';
-  row.append(dot, nm, pc);
-  scoreEl.appendChild(row);
-  return { ent: e, row, pc };
-});
+let scoreRows = [];
+
+function buildScoreRows() {
+  scoreEl.textContent = '';
+  scoreRows = ents.map((e) => {
+    const row = document.createElement('div');
+    row.className = 'r' + (e === me ? ' me' : '');
+    const dot = document.createElement('span'); dot.className = 'dot';
+    dot.style.background = CSS_COLOR[e.id - 1];
+    const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = e.name;
+    const pc = document.createElement('span'); pc.className = 'pc';
+    row.append(dot, nm, pc);
+    scoreEl.appendChild(row);
+    return { ent: e, row, pc };
+  });
+}
 
 function drawHud(now, s) {
   frames++;
@@ -1469,8 +1669,10 @@ function drawHud(now, s) {
     const m = (t / 60) | 0, sec = (t % 60) | 0;
     timerEl.textContent = m + ':' + String(sec).padStart(2, '0');
     timerEl.classList.toggle('warn', t <= 30);
+    const tl = me.trail.length;
+    const warn = tl > TRAIL_CAP * 0.7 ? ' · 궤적 ' + tl + '/' + TRAIL_CAP + ' 위험' : '';
     stat.textContent = '내 순위 ' + (rank.indexOf(me) + 1) + '위 · ' +
-      (share(me) * 100).toFixed(1) + '% · ' + s.speed.toFixed(1) + ' m/s · ' + fps + ' fps';
+      (share(me) * 100).toFixed(1) + '% · ' + s.speed.toFixed(1) + ' m/s' + warn + ' · ' + fps + ' fps';
   } else {
     stat.textContent = s.speed.toFixed(1) + ' m/s · ' + fps + ' fps';
   }
@@ -1488,6 +1690,9 @@ function loop(now) {
   const s = active ? movePlayer(dt) : { running: false, speed: 0 };
 
   if (screen === 'game' && active) stepMatch(dt);
+  if (online && screen === 'game' && !matchOver) {
+    if (iamHost) hostTick(now); else if (locked) guestTick(now);
+  }
   if (screen === 'game') {
     if (trailDirty) { syncTrailMesh(); trailDirty = false; }
     syncBodies();
