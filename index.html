@@ -250,7 +250,7 @@ const MATCH_SEC = 180;          // 제한시간 3분
 const WIN_SHARE = 0.60;         // 60% 도달 시 즉시 종료
 const RESPAWN_SEC = 1.5;        // 사망 후 리스폰 대기
 const START_R = 2;              // 시작 영역 반경 (5x5)
-const BOT_SPEED = 5.6;
+const BOT_WALK = WALK, BOT_RUN = RUN;   // 봇도 사람과 같은 걷기/달리기 속도를 쓴다 (15 문서)
 
 const LOBBY = 56, REACH = 3.2;   // 문 슬롯 6개(간격 8.2m)가 들어가려면 40m로는 좁다
 
@@ -562,6 +562,7 @@ function makeEnt(slot, name, bot, netId) {
     alive: true, respawn: 0, trail: [], cells: 0, deaths: 0,
     dir: 0, tgx: 0, tgz: 0, phase: 'idle', legIdx: 0, legs: [0, 0, 0], turns: [1, 1], legLeft: 0,
     ai: null, shapeName: '', think: 0, rethink: false, huntT: 0,   // 13단계 봇 성격·판단 주기
+    running: false, threat: Infinity,                              // 15단계 봇 달리기
     preyGx: 0, preyGz: 0, preyI: undefined,
     homeX: 0, homeZ: 0, homeGx: 0, homeGz: 0,
   };
@@ -849,16 +850,16 @@ function threatToTrail(b) {
 // ── 봇 성격 ─────────────────────────────────────────────
 // 셋이 똑같이 판단하면 도형만 바꿔도 결국 비슷해 보인다. 배역을 나눠 준다.
 //   size 기본 변 길이(셀) · aggr 사냥 의욕 · huntR 사냥 반경 · flee 이 거리 안에 적이 오면 복귀
-//   period 판단 주기(초) · whim 방향 선택의 변덕 · maxTrail 궤적 상한
+//   period 판단 주기(초) · whim 방향 선택의 변덕 · sprint 달리기 적극성 · maxTrail 궤적 상한
 const BOT_BRAINS = [
   { tag: '확장형', size: 28, aggr: 0.05, huntR: 18, flee: 20, period: 1.8, whim: 0.30,
-    maxTrail: 275, shapes: ['네모', '나선', 'L자', '갈고리'] },
+    sprint: 0.35, maxTrail: 275, shapes: ['네모', '나선', 'L자', '갈고리'] },
   { tag: '사냥꾼', size: 19, aggr: 0.60, huntR: 55, flee: 16, period: 1.1, whim: 0.50,
-    maxTrail: 150, shapes: ['네모', '넓적', 'L자'] },
+    sprint: 0.85, maxTrail: 150, shapes: ['네모', '넓적', 'L자'] },
   { tag: '침투형', size: 23, aggr: 0.15, huntR: 30, flee: 18, period: 1.3, whim: 0.60,
-    maxTrail: 260, shapes: ['납작', '나선', '갈고리', '넓적'] },
+    sprint: 0.60, maxTrail: 260, shapes: ['납작', '나선', '갈고리', '넓적'] },
   { tag: '수비형', size: 18, aggr: 0.08, huntR: 20, flee: 24, period: 1.2, whim: 0.25,
-    maxTrail: 175, shapes: ['네모', 'L자', '넓적', '나선'] },
+    sprint: 0.45, maxTrail: 175, shapes: ['네모', 'L자', '넓적', '나선'] },
 ];
 
 function assignBrains() {
@@ -880,6 +881,7 @@ function assignBrains() {
       flee:     Math.round(jit(base.flee, 0.30)),
       period:   Math.max(0.25, jit(base.period, 0.35)),
       whim:     base.whim,
+      sprint:   Math.min(0.95, jit(base.sprint, 0.25)),   // 달리기 적극성
       maxTrail: Math.round(jit(base.maxTrail, 0.20)),   // 죽는 상한이 아니라 '이쯤이면 돌아간다' 기준
       shapes:   base.shapes,
     };
@@ -1015,7 +1017,7 @@ function retargetHome(b) {
 // 다음에 들어갈 칸을 고른다. 자기 궤적 칸은 절대 고르지 않고,
 // 그 칸에서 집으로 돌아올 길이 남아 있는지까지 확인한다.
 function botPick(b) {
-  const ai = b.ai || { maxTrail: MAX_TRAIL, aggr: 0.3, huntR: 15, flee: 10 };
+  const ai = b.ai || { maxTrail: MAX_TRAIL, aggr: 0.3, huntR: 15, flee: 10, sprint: 0.5 };
 
   // ── 국면 전환 ──
   if (b.phase === 'out') {
@@ -1039,7 +1041,7 @@ function botPick(b) {
   if (b.rethink) {
     b.rethink = false;
     if (b.phase !== 'home') {
-      const foe = threatToTrail(b);
+      const foe = b.threat;
       if (b.trail.length > 12 && foe < ai.flee) {
         b.phase = 'home';                        // 위험 — 치고 빠진다 (수비)
       } else if ((b.phase === 'out' || b.phase === 'hunt')
@@ -1122,17 +1124,53 @@ function botPick(b) {
   b.tgz = Math.max(0, Math.min(GRID - 1, nz));
 }
 
+// ── 달리기 ──────────────────────────────────────────────
+// 지금 얼마나 급한가를 0~1로 매긴다. 봇마다 '달리기 적극성'이 달라서
+// 같은 상황에서도 어떤 봇은 달리고 어떤 봇은 걷는다.
+function urgency(b, ai) {
+  if (b.phase === 'hunt') {
+    const d = Math.abs(b.preyGx - b.gx) + Math.abs(b.preyGz - b.gz);
+    return d > 4 ? 0.9 : 0.3;      // 붙었으면 천천히 — 마지막 한 칸은 정확히 밟아야 한다
+  }
+  if (b.phase === 'home') {
+    // 길게 늘어놓았거나 적이 내 궤적에 붙었으면 전력으로 집에 붙는다
+    if (b.trail.length > 60 || b.threat < ai.flee) return 0.85;
+    return 0.4;
+  }
+  return 0.1;                      // 평시 확장 — 급할 것 없다
+}
+
+// 달리면 같은 시간에 더 많은 칸을 지나므로 판단할 틈이 그만큼 줄어든다.
+// 그래서 '앞이 트여 있을 때만' 달린다. 앞쪽에 내 궤적이나 벽이 있으면 미리 걷기로 줄인다.
+const LOOK_RUN = 4;                // 달릴 때 미리 보는 칸 수
+
+function pathClear(b) {
+  for (let n = 1; n <= LOOK_RUN; n++) {
+    const nx = b.gx + DIRS[b.dir][0] * n, nz = b.gz + DIRS[b.dir][1] * n;
+    if (nx < EDGE || nz < EDGE || nx > GRID - 1 - EDGE || nz > GRID - 1 - EDGE) return false;
+    if (trail[nz * GRID + nx] === b.id) return false;
+  }
+  return true;
+}
+
 function stepBot(b, dt) {
   if (!b.alive) return;
   if (!b.ai) assignBrains();
   b.think -= dt;
-  if (b.think <= 0) { b.think = b.ai.period; b.rethink = true; }
+  if (b.think <= 0) {
+    b.think = b.ai.period;
+    b.rethink = true;
+    b.threat = threatToTrail(b);        // 주기마다 한 번만 잰다. 매 프레임 훑으면 비싸다
+  }
   if (b.phase === 'idle') { planBot(b); botPick(b); }
+
+  // 급한 정도가 문턱을 넘고, 앞이 트여 있을 때만 달린다
+  b.running = urgency(b, b.ai) >= 1 - b.ai.sprint && pathClear(b);
 
   const tx = wxOf(b.tgx), tz = wzOf(b.tgz);
   const dx = tx - b.x, dz = tz - b.z;
   const d = Math.hypot(dx, dz);
-  const step = BOT_SPEED * dt;
+  const step = (b.running ? BOT_RUN : BOT_WALK) * dt;
 
   if (d <= step || d < 1e-4) {
     b.x = tx; b.z = tz;
