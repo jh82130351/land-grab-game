@@ -106,6 +106,8 @@
                border:1px solid var(--line);display:flex;flex-direction:column;
                align-items:center;justify-content:center;gap:1px;position:relative}
   #slots .slot.has{border-color:rgba(255,255,255,.55)}
+  #slots .slot.sel{border-color:#fff;box-shadow:0 0 0 1px #fff inset,0 0 10px rgba(255,255,255,.25)}
+  #slots .slot.sel .no{color:#fff}
   #slots .slot .no{position:absolute;left:5px;top:3px;font-size:9px;color:var(--dim)}
   #slots .slot .ic{font-size:19px;line-height:1.1}
   #slots .slot .nm{font-size:9px;line-height:1.1;letter-spacing:-.02em;text-align:center}
@@ -1486,6 +1488,7 @@ function initMatch(defs, secs, win) {
   });
   assignBrains();          // 봇마다 성격을 새로 뽑는다 — 매 판 배역이 달라진다
   clearItems();            // 아이템은 매 경기 새로 깔린다
+  selSlot = 0;             // 선택 슬롯은 1번 칸에서 시작
   paintAll();
   trailDirty = true;
   recount();
@@ -1558,6 +1561,16 @@ const slotsEl = document.getElementById('slots');
 const fxEl = document.getElementById('fx');
 
 // ── HUD ──
+// 선택 슬롯은 항상 하나다. 기본은 1번 칸.
+// 순전히 내 화면의 조작 상태라 온라인으로 보내지 않는다 — 보내는 건 '몇 번 칸을 썼다'뿐이다.
+let selSlot = 0;
+
+// 온라인 게스트는 방장에게 올리고, 그 밖에는 바로 쓴다.
+function fireSlot(slot) {
+  if (online && !iamHost) send({ t: 'relay', data: { k: 'u', s: slot } });
+  else useSlot(me, slot);
+}
+
 const slotBoxes = [];
 for (let k = 0; k < SLOTS; k++) {
   const box = document.createElement('div');
@@ -1575,6 +1588,7 @@ function drawSlots() {
     const id = me.slots[k], sk = id ? SKILLS[id] : null;
     const b = slotBoxes[k];
     b.box.classList.toggle('has', !!sk);
+    b.box.classList.toggle('sel', k === selSlot);
     b.ic.textContent = sk ? sk.icon : '·';
     b.ic.style.color = sk ? 'rgb(' + sk.rgb.join(',') + ')' : 'rgba(255,255,255,.25)';
     b.nm.textContent = sk ? sk.name : '빈 칸';
@@ -2372,17 +2386,32 @@ addEventListener('keydown', (e) => {
   if (screen === 'menu' || screen === 'result' || screen === 'room' || screen === 'create' || paused) return;
   if (e.code === 'KeyE' && screen === 'lobby') { interact(); return; }
   if (screen === 'game' && (e.code === 'Digit1' || e.code === 'Digit2' || e.code === 'Digit3')) {
-    const slot = +e.code.slice(5) - 1;
-    // 온라인 게스트는 '몇 번 칸을 눌렀다'만 올린다. 계산은 방장이 한다.
-    if (online && !iamHost) send({ t: 'relay', data: { k: 'u', s: slot } });
-    else useSlot(me, slot);
-    return;
+    selSlot = +e.code.slice(5) - 1;      // 고르고
+    fireSlot(selSlot);                   // 들어 있으면 그대로 쓴다 (비어 있으면 아무 일 없다)
+    return;                              // 써서 비워져도 선택은 이 칸에 남는다
   }
   keys[e.code] = true;
   if (e.code === 'Space') e.preventDefault();
 });
 addEventListener('keyup', (e) => { keys[e.code] = false; });
 addEventListener('blur', clearKeys);
+
+// 휠 — 선택 슬롯을 1 → 2 → 3 → 1 로 돌린다
+addEventListener('wheel', (e) => {
+  if (screen !== 'game' || !locked || paused) return;
+  e.preventDefault();
+  selSlot = (selSlot + (e.deltaY > 0 ? 1 : SLOTS - 1)) % SLOTS;
+}, { passive: false });
+
+// 우클릭 — 지금 고른 칸을 쓴다. 비어 있으면 아무 일도 안 일어난다.
+addEventListener('mousedown', (e) => {
+  if (e.button !== 2 || screen !== 'game' || !locked || paused) return;
+  e.preventDefault();
+  fireSlot(selSlot);
+});
+
+// 우클릭 메뉴는 경기 중에 뜨면 안 된다
+addEventListener('contextmenu', (e) => { if (screen === 'game' || locked) e.preventDefault(); });
 
 document.addEventListener('mousemove', (e) => {
   if (!locked) return;
