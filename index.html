@@ -246,7 +246,6 @@ const FIELD = GRID * CELL;      // 맵 물리 크기 300m
 const HALF  = FIELD / 2;
 const TOTAL = GRID * GRID;
 
-const TRAIL_CAP = 320;          // 궤적 최대 길이(셀) = 480m. 밸런스 핵심 — 09 문서 참조
 const MATCH_SEC = 180;          // 제한시간 3분
 const WIN_SHARE = 0.60;         // 60% 도달 시 즉시 종료
 const RESPAWN_SEC = 1.5;        // 사망 후 리스폰 대기
@@ -399,7 +398,8 @@ function buildArena() {
   });
 
   // 궤적 낮은 벽 — 인스턴싱. 궤적이 바뀔 때만 다시 채운다.
-  const TRAIL_CAP = 4096;
+  // 14단계에서 궤적 길이 제한이 없어졌다. 넷이 동시에 크게 둘러도 넘치지 않게 잡는다.
+  const TRAIL_CAP = 16384;
   const trailMesh = new THREE.InstancedMesh(
     new THREE.BoxGeometry(CELL, 0.9, CELL),
     new THREE.MeshStandardMaterial({ roughness: .6 }),
@@ -721,9 +721,8 @@ function stepCell(ent, gx, gz) {
     ent.trail.push(i);
     paint(i);
     trailDirty = true;
-    // 한 번에 너무 크게 두르지 못하게 막는다. 이게 없으면 맵 외곽을 한 바퀴 돌아
-    // 한 방에 전부 먹는 수가 생긴다 (09 문서에 근거).
-    if (ent.trail.length >= TRAIL_CAP) kill(ent, ent, '궤적이 너무 길어 끊어짐');
+    // 14단계 — 길이 제한을 없앴다. 얼마든지 크게 둘러도 된다.
+    // 크게 두르는 위험은 규칙이 아니라 '봇이 자르러 온다'가 맡는다 (14 문서).
   }
 }
 
@@ -852,13 +851,13 @@ function threatToTrail(b) {
 //   size 기본 변 길이(셀) · aggr 사냥 의욕 · huntR 사냥 반경 · flee 이 거리 안에 적이 오면 복귀
 //   period 판단 주기(초) · whim 방향 선택의 변덕 · maxTrail 궤적 상한
 const BOT_BRAINS = [
-  { tag: '확장형', size: 28, aggr: 0.08, huntR: 10, flee: 20, period: 1.8, whim: 0.30,
+  { tag: '확장형', size: 28, aggr: 0.05, huntR: 18, flee: 20, period: 1.8, whim: 0.30,
     maxTrail: 275, shapes: ['네모', '나선', 'L자', '갈고리'] },
-  { tag: '사냥꾼', size: 19, aggr: 0.35, huntR: 16, flee: 16, period: 1.1, whim: 0.50,
-    maxTrail: 200, shapes: ['네모', '넓적', 'L자'] },
-  { tag: '침투형', size: 23, aggr: 0.10, huntR: 12, flee: 18, period: 1.3, whim: 0.60,
+  { tag: '사냥꾼', size: 19, aggr: 0.60, huntR: 55, flee: 16, period: 1.1, whim: 0.50,
+    maxTrail: 150, shapes: ['네모', '넓적', 'L자'] },
+  { tag: '침투형', size: 23, aggr: 0.15, huntR: 30, flee: 18, period: 1.3, whim: 0.60,
     maxTrail: 260, shapes: ['납작', '나선', '갈고리', '넓적'] },
-  { tag: '수비형', size: 18, aggr: 0.08, huntR: 10, flee: 24, period: 1.2, whim: 0.25,
+  { tag: '수비형', size: 18, aggr: 0.08, huntR: 20, flee: 24, period: 1.2, whim: 0.25,
     maxTrail: 175, shapes: ['네모', 'L자', '넓적', '나선'] },
 ];
 
@@ -881,7 +880,7 @@ function assignBrains() {
       flee:     Math.round(jit(base.flee, 0.30)),
       period:   Math.max(0.25, jit(base.period, 0.35)),
       whim:     base.whim,
-      maxTrail: Math.min(TRAIL_CAP - 60, Math.round(jit(base.maxTrail, 0.20))),
+      maxTrail: Math.round(jit(base.maxTrail, 0.20)),   // 죽는 상한이 아니라 '이쯤이면 돌아간다' 기준
       shapes:   base.shapes,
     };
     e.think = Math.random() * e.ai.period;             // 판단 시점도 서로 어긋나게
@@ -965,19 +964,38 @@ function planBot(b) {
   b.legLeft = b.legs[0];
 }
 
-// 사정거리 안에 드러난 남의 궤적을 찾는다. 긴 궤적일수록 끊었을 때 이득이 크다.
+// 잘릴 만한 상대를 찾는다. 사람 플레이어도 똑같이 후보다.
+// 궤적을 밟으면 그 주인이 죽고 땅을 전부 잃는다. 그러니 고를 때 보는 건 두 가지다.
+//   · 늘어놓은 궤적이 길수록 — 크게 두르는 중이라 손해가 크다
+//   · 자기 영역에서 멀리 나와 있을수록 — 집에 못 닿고 죽을 확률이 높다
+// 어느 칸을 밟든 결과는 같으므로, 고른 상대의 궤적 중 나한테 제일 가까운 칸을 노린다.
+// '노출됐다'의 기준. 둘 중 하나를 넘어야 사냥감이다.
+// 이 문턱이 없으면 봇끼리 평소 확장까지 서로 물어뜯어 경기가 망가진다 (14 문서 검증).
+const HUNT_AWAY = 100;           // 자기 집에서 이만큼(150m) 나와 있거나
+const HUNT_LONG = 160;           // 궤적을 이만큼(240m) 늘어놓았거나
+
 function findPrey(b, radius) {
   let best = null, bestS = 0;
   for (const e of ents) {
-    if (e === b || !e.alive || !e.trail.length) continue;
-    const worth = Math.min(3, e.trail.length / 60) * 8;
-    for (const i of e.trail) {
+    if (e === b || !e.alive) continue;
+
+    const away = Math.abs(gxOf(e.x) - e.homeGx) + Math.abs(gzOf(e.z) - e.homeGz);
+    if (away < HUNT_AWAY && e.trail.length < HUNT_LONG) continue;   // 아직 안전권이다
+
+    let ci = -1, cd = radius + 1, cgx = 0, cgz = 0;
+    const st = 1 + ((e.trail.length / 400) | 0);     // 궤적이 아주 길면 띄엄띄엄 본다
+    for (let k = 0; k < e.trail.length; k += st) {
+      const i = e.trail[k];
       const gz = (i / GRID) | 0, gx = i - gz * GRID;
       const d = Math.abs(gx - b.gx) + Math.abs(gz - b.gz);
-      if (d > radius) continue;
-      const s = (radius - d) + worth;
-      if (s > bestS) { bestS = s; best = { gx, gz, i }; }
+      if (d < cd) { cd = d; ci = i; cgx = gx; cgz = gz; }
     }
+    if (ci < 0) continue;
+
+    const s = Math.min(200, e.trail.length)          // 길게 늘어놓을수록
+            + Math.min(120, away) * 1.5              // 집에서 멀리 나와 있을수록
+            - cd * 2;                                // 내가 멀수록 깎는다
+    if (s > bestS) { bestS = s; best = { gx: cgx, gz: cgz, i: ci, name: e.name }; }
   }
   return best;
 }
@@ -1013,7 +1031,7 @@ function botPick(b) {
     b.huntT++;
     const ti = b.preyI;
     if (ti === undefined || !trail[ti] || trail[ti] === b.id) b.phase = 'out';   // 사라졌다
-    else if (b.huntT > ai.huntR * 3) b.phase = 'home';                           // 너무 오래 쫓았다
+    else if (b.huntT > ai.huntR * 2 + 20) b.phase = 'home';                      // 너무 오래 쫓았다
     else if (b.trail.length > ai.maxTrail) b.phase = 'home';
   }
 
@@ -1024,11 +1042,15 @@ function botPick(b) {
       const foe = threatToTrail(b);
       if (b.trail.length > 12 && foe < ai.flee) {
         b.phase = 'home';                        // 위험 — 치고 빠진다 (수비)
-      } else if (b.phase === 'out' && b.trail.length < ai.maxTrail * 0.6
-                 && Math.random() < ai.aggr) {
-        const prey = findPrey(b, ai.huntR);      // 노출된 궤적 가로채기 (공격)
+      } else if ((b.phase === 'out' || b.phase === 'hunt')
+                 && b.trail.length < ai.maxTrail * 0.8
+                 && (b.phase === 'hunt' || Math.random() < ai.aggr)) {
+        // 사냥 중에도 주기마다 다시 조준한다. 상대가 궤적을 늘리며 다가오면
+        // 더 가까운 칸이 생기는데, 처음 찍은 칸만 보고 있으면 그걸 놓친다.
+        const prey = findPrey(b, ai.huntR);
         if (prey) {
-          b.phase = 'hunt'; b.huntT = 0;
+          if (b.phase !== 'hunt') b.huntT = 0;
+          b.phase = 'hunt';
           b.preyGx = prey.gx; b.preyGz = prey.gz; b.preyI = prey.i;
         }
       }
@@ -1935,7 +1957,7 @@ function drawHud(now, s) {
     timerEl.textContent = m + ':' + String(sec).padStart(2, '0');
     timerEl.classList.toggle('warn', t <= 30);
     const tl = me.trail.length;
-    const warn = tl > TRAIL_CAP * 0.7 ? ' · 궤적 ' + tl + '/' + TRAIL_CAP + ' 위험' : '';
+    const warn = tl ? ' · 궤적 ' + tl + '칸' : '';   // 길다고 죽지는 않는다. 대신 봇이 노린다
     stat.textContent = '내 순위 ' + (rank.indexOf(me) + 1) + '위 · ' +
       (share(me) * 100).toFixed(1) + '% · ' + s.speed.toFixed(1) + ' m/s' + warn + ' · ' + fps + ' fps';
   } else {
