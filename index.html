@@ -340,6 +340,7 @@ const SPECS = SLOT_RGB.map((rgb, k) => ({ id: k + 1, rgb }));   // 텍스처 칠
 const owner = new Uint8Array(TOTAL);   // 0 = 빈 땅, 1~4 = 소유자 id
 const trail = new Uint8Array(TOTAL);   // 0 = 없음, 1~4 = 궤적 주인 id
 const pix   = new Uint8Array(TOTAL * 4);
+const pred  = new Uint8Array(TOTAL);   // 게스트의 로컬 예측 궤적 (렌더 전용 — 22 문서)
 const seen  = new Uint8Array(TOTAL);   // flood-fill 재사용 버퍼
 const queue = new Int32Array(TOTAL);   // flood-fill 재사용 큐
 
@@ -366,7 +367,7 @@ const inGrid = (gx, gz) => gx >= 0 && gx < GRID && gz >= 0 && gz < GRID;
 function paint(i) {
   const gz = (i / GRID) | 0, gx = i - gz * GRID;
   const p = ((GRID - 1 - gz) * GRID + gx) * 4;
-  const t = trail[i], o = owner[i];
+  const t = trail[i] || (pred[i] ? me.id : 0), o = owner[i];
   let r, g, b;
   if (t) {                                   // 궤적 — 밝게
     const c = SPECS[t - 1].rgb;
@@ -1499,6 +1500,65 @@ function initMatch(defs, secs, win) {
   arena.spawn.set(me.x, EYE, me.z);
 }
 
+// ═══ 게스트 로컬 예측 궤적 ═══════════════════════════════
+// 온라인 게스트의 궤적은 '내 위치 → 방장 → 다시 나'를 돌아야 그려진다. 구조적으로 늦다.
+// 그래서 지나는 칸을 화면에만 미리 깔아 둔다. 방장 확정이 오면 그걸로 덮는다.
+//
+// 반드시 지키는 선 — 이건 **렌더 전용**이다.
+//   · `trail`·`owner`를 절대 안 건드린다. 죽음·점령·상대 궤적 판정은 계속 방장만 한다.
+//   · 점령은 예측하지 않는다. 집에 닿아도 방장이 확정해 줄 때까지 아무것도 안 칠한다.
+//   · 확정이 안 오는 예측은 시간이 지나면 스스로 걷힌다.
+const PRED_TTL = 1500;                 // 확정 없이 이만큼(ms) 지나면 예측을 지운다
+let predCell = [], predAt = [], predHead = 0;
+let predGx = -1, predGz = -1;
+
+function markPred(i, now) {
+  if (pred[i] || trail[i] || owner[i] === me.id) return;   // 확정이 있거나 내 땅이면 그냥 둔다
+  pred[i] = 1;
+  predCell.push(i); predAt.push(now);
+  paint(i);
+  trailDirty = true;
+}
+
+function dropPred(i) {
+  if (!pred[i]) return;
+  pred[i] = 0;
+  paint(i);
+  trailDirty = true;
+}
+
+function clearPred() {
+  for (let k = predHead; k < predCell.length; k++) dropPred(predCell[k]);
+  predCell = []; predAt = []; predHead = 0;
+  predGx = -1; predGz = -1;
+}
+
+// 지나온 칸을 stepCells와 같은 방식으로 이어 붙인다. 프레임이 떨어져도 구멍이 안 난다.
+function predictTrail(now) {
+  if (!me.alive || matchOver) { clearPred(); return; }
+  const gx = gxOf(pos.x), gz = gzOf(pos.z);
+  if (!inGrid(gx, gz)) return;
+  if (predGx < 0 || Math.abs(gx - predGx) + Math.abs(gz - predGz) > 64) {
+    predGx = gx; predGz = gz;                       // 처음이거나 순간이동 — 잇지 않는다
+    markPred(gz * GRID + gx, now);
+  } else {
+    let cx = predGx, cz = predGz, guard = 0;
+    while ((cx !== gx || cz !== gz) && guard++ < 80) {
+      if (Math.abs(gx - cx) >= Math.abs(gz - cz)) cx += Math.sign(gx - cx);
+      else cz += Math.sign(gz - cz);
+      markPred(cz * GRID + cx, now);
+    }
+    predGx = gx; predGz = gz;
+  }
+
+  while (predHead < predCell.length && now - predAt[predHead] > PRED_TTL) {
+    dropPred(predCell[predHead]); predHead++;       // 확정이 안 온 예측은 걷어낸다
+  }
+  if (predHead > 2048) {                            // 소비한 앞부분을 가끔 잘라 낸다
+    predCell = predCell.slice(predHead); predAt = predAt.slice(predHead); predHead = 0;
+  }
+}
+
 // ═══ 3D 반영 ═════════════════════════════════════════════
 // 인스턴싱용 임시 객체. 회전을 쓰는 쪽과 안 쓰는 쪽을 반드시 나눠 둔다.
 // 하나를 같이 쓰면 회전을 건 쪽의 값이 남아 다음 쪽에 묻는다 (20 문서).
@@ -1513,7 +1573,7 @@ function syncTrailMesh() {
   dummy.scale.set(1, 1, 1);
   let n = 0;
   for (let i = 0; i < TOTAL && n < arena.cap; i++) {
-    const t = trail[i];
+    const t = trail[i] || (pred[i] ? me.id : 0);
     if (!t) continue;
     const c = SLOT_RGB[t - 1];
     const gz = (i / GRID) | 0, gx = i - gz * GRID;
@@ -1914,6 +1974,7 @@ function netStartMatch(room, members) {
   dirtySet.clear();
   pendingFeed = [];
   tickAt = 0;
+  clearPred();
   netNow = 0; netStartedAt = -1;
   for (const e of ents) { e.seen = 0; e.waiting = false; }    // 참가 유예는 첫 틱에서 시작한다
 
@@ -1934,6 +1995,7 @@ function joinPrompt() {
 }
 
 function netEndMatch() {
+  clearPred();
   online = false;
   collectDirty = false;
   dirtySet.clear();
@@ -1998,6 +2060,7 @@ function applyState(d) {
       // 세워 둔 나와 어긋난 좌표를 받아 없는 궤적을 긋는다 (17 문서).
       if (deaths !== e.deaths || (!was && e.alive)) {
         e.deaths = deaths;
+        clearPred();                           // 죽거나 되살아났다 — 깔아 둔 예측은 버린다
         pos.set(x, EYE, z); vel.set(0, 0, 0);
         camera.position.copy(pos);
       }
@@ -2011,6 +2074,7 @@ function applyState(d) {
       const i = d.c[k], v = d.c[k + 1];
       owner[i] = v & 7;
       trail[i] = (v >> 3) & 7;
+      pred[i] = 0;                             // 확정이 왔다 — 예측은 여기서 역할이 끝난다
       paint(i);
     }
     trailDirty = true;
@@ -2488,6 +2552,8 @@ function loop(now) {
   // 온라인 방장은 전원의 판정을 맡는다. 내 포인터 잠금이 풀렸다고(다른 창 클릭·ESC·탭 전환)
   // 멈춰버리면 게스트의 궤적·점령·타이머가 통째로 멎는다. 방장은 잠금과 무관하게 계속 돈다.
   if (screen === 'game' && (active || (online && iamHost && !matchOver))) stepMatch(dt);
+  // 게스트는 판정을 안 하는 대신, 지나는 칸을 화면에만 미리 깔아 둔다 (22 문서)
+  if (screen === 'game' && online && !iamHost) predictTrail(now);
   if (online && screen === 'game' && !matchOver) {
     // 게스트의 위치 보고를 포인터 잠금에 묶으면 안 된다. 창이 뒤로 밀리거나
     // [참가하기]를 아직 안 누른 게스트는 방장에게 아무 것도 못 보내고,
