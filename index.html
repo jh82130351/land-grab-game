@@ -701,6 +701,19 @@ function respawnEnt(ent) {
   recount();
 }
 
+// 지금 그리는 중인 궤적의 '최근 구간'인가.
+// FRESH_TAIL칸은 달리기(11m/s)로 약 2.5초, 걷기(6m/s)로 약 4.5초 동안 지나는 거리다.
+// 좁게 회전하거나 지그재그로 가면 이 구간 안을 다시 밟게 된다 — 그건 통과시킨다.
+// 그보다 앞서 남긴 칸은 '옛 궤적'이므로 가로지르면 그대로 죽는다.
+const FRESH_TAIL = 18;
+
+function isFreshTrail(ent, i) {
+  const n = ent.trail.length;
+  for (let k = n - 1, c = 0; k >= 0 && c < FRESH_TAIL; k--, c++)
+    if (ent.trail[k] === i) return true;
+  return false;
+}
+
 // 참가자가 새 셀에 들어갔을 때의 판정 — 게임 규칙의 핵심
 function stepCell(ent, gx, gz) {
   if (!inGrid(gx, gz)) return;
@@ -710,11 +723,19 @@ function stepCell(ent, gx, gz) {
   const i = gz * GRID + gx;
 
   const t = trail[i];
-  if (t) {                                  // 궤적을 밟았다 → 그 궤적 주인이 죽는다
+  if (t === ent.id) {
+    // 지금 딛고 지나는 길이면 그냥 통과한다. 궤적은 눈에 폭이 있는 띠고,
+    // 좁게 꺾거나 지그재그로 가면 방금 지난 칸을 다시 밟게 되는데 그건 주행이지 사고가 아니다.
+    // 죽어야 하는 건 '뒤에 남겨 둔 옛 궤적을 가로지를 때'뿐이다 (18 문서).
+    if (isFreshTrail(ent, i)) return;
+    kill(ent, ent, '자기 궤적에 걸림');
+    return;
+  }
+  if (t) {                                  // 남의 궤적을 밟았다 → 그 주인이 죽는다
     const victim = ents[t - 1];
-    if (victim) kill(victim, ent, t === ent.id ? '자기 궤적에 걸림' : ent.name + '에게 잡힘');
+    if (victim) kill(victim, ent, ent.name + '에게 잡힘');
     else { trail[i] = 0; paint(i); }        // 주인이 없는 궤적은 지운다
-    if (!ent.alive) return;                 // 자기 궤적이었다면 본인이 죽은 것
+    if (!ent.alive) return;
   }
 
   if (owner[i] === ent.id) {
