@@ -99,8 +99,28 @@
        border:1px solid var(--line);border-radius:10px;background:#0d1015}
   #map.on{display:block}
 
-  /* 킬로그 (미니맵 아래) */
-  #feed{position:fixed;right:14px;top:206px;z-index:6;display:none;
+  /* 스킬 슬롯 3칸 (미니맵 아래) */
+  #slots{position:fixed;right:14px;top:206px;z-index:6;display:none;gap:6px;width:180px}
+  #slots.on{display:flex}
+  #slots .slot{flex:1;height:56px;border-radius:10px;background:var(--panel);
+               border:1px solid var(--line);display:flex;flex-direction:column;
+               align-items:center;justify-content:center;gap:1px;position:relative}
+  #slots .slot.has{border-color:rgba(255,255,255,.55)}
+  #slots .slot .no{position:absolute;left:5px;top:3px;font-size:9px;color:var(--dim)}
+  #slots .slot .ic{font-size:19px;line-height:1.1}
+  #slots .slot .nm{font-size:9px;line-height:1.1;letter-spacing:-.02em;text-align:center}
+  #slots .slot .nm.dim{color:var(--dim)}
+
+  /* 발동 중인 효과 (슬롯 아래) */
+  #fx{position:fixed;right:14px;top:270px;z-index:6;display:none;
+      flex-direction:column;gap:4px;width:180px;pointer-events:none}
+  #fx.on{display:flex}
+  #fx .e{padding:5px 9px;border-radius:7px;font-size:11px;
+         border:1px solid var(--line);background:var(--panel)}
+  #fx .e .t{color:var(--dim);float:right}
+
+  /* 킬로그 (효과 줄 아래) */
+  #feed{position:fixed;right:14px;top:310px;z-index:6;display:none;
         flex-direction:column;gap:5px;width:180px;pointer-events:none}
   #feed.on{display:flex}
   #feed .f{padding:7px 10px;border-radius:7px;font-size:11.5px;line-height:1.45;
@@ -152,6 +172,8 @@
 <div id="score"></div>
 <div id="timer"></div>
 <canvas id="map" width="180" height="180"></canvas>
+<div id="slots"></div>
+<div id="fx"></div>
 <div id="feed"></div>
 
 <div id="hud">
@@ -411,6 +433,19 @@ function buildArena() {
   trailMesh.frustumCulled = false;
   scene.add(trailMesh);
 
+  // 스킬 아이템 — 팔면체를 띄워 둔다. 색이 곧 종류다 (19 문서).
+  const ITEM_CAP = 32;
+  const itemMesh = new THREE.InstancedMesh(
+    new THREE.OctahedronGeometry(0.62),
+    new THREE.MeshStandardMaterial({ roughness: .35, metalness: .1, emissive: 0x222222 }),
+    ITEM_CAP
+  );
+  itemMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  itemMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(ITEM_CAP * 3), 3);
+  itemMesh.count = 0;
+  itemMesh.frustumCulled = false;
+  scene.add(itemMesh);
+
   // 참가자 몸체
   const bodyGeo = new THREE.BoxGeometry(1.3, 2.2, 1.3);
   const bodies = SPECS.map((s) => {
@@ -424,7 +459,7 @@ function buildArena() {
   });
 
   return { scene, limit: HALF - 1.2, spawn: new THREE.Vector3(0, EYE, 0), yaw: 0,
-           spots: [], trailMesh, bodies, cap: TRAIL_CAP };
+           spots: [], trailMesh, bodies, cap: TRAIL_CAP, itemMesh, itemCap: ITEM_CAP };
 }
 
 // ═══ 월드 2: 온라인 로비 ═════════════════════════════════
@@ -564,6 +599,7 @@ function makeEnt(slot, name, bot, netId) {
     ai: null, shapeName: '', think: 0, rethink: false, huntT: 0,   // 13단계 봇 성격·판단 주기
     running: false, threat: Infinity,                              // 15단계 봇 달리기
     seen: 0, waiting: false, warpT: 0,                             // 17단계 온라인 보고 상태
+    slots: [0, 0, 0], fxBoost: 0, fxInv: 0, fxWide: false,         // 19단계 스킬 슬롯·효과
     preyGx: 0, preyGz: 0, preyI: undefined,
     homeX: 0, homeZ: 0, homeGx: 0, homeGz: 0,
   };
@@ -604,7 +640,8 @@ function giveBlock(ent, gx, gz) {
 
 // 궤적이 닫혔을 때만 호출된다. 바깥에서 flood-fill 해서 닿지 않는 칸을 전부 먹는다.
 function capture(ent) {
-  for (const i of ent.trail) { trail[i] = 0; owner[i] = ent.id; paint(i); }
+  const claimed = [];                          // 이번에 새로 가진 칸 (점령 확대가 쓴다)
+  for (const i of ent.trail) { trail[i] = 0; owner[i] = ent.id; paint(i); claimed.push(i); }
   ent.trail.length = 0;
   trailDirty = true;
 
@@ -630,6 +667,8 @@ function capture(ent) {
   let gained = 0;
   for (let i = 0; i < TOTAL; i++) {
     if (!seen[i] && owner[i] !== ent.id) {
+      const guard = trail[i] ? ents[trail[i] - 1] : null;
+      if (guard && guard.alive && guard.fxInv > 0) continue;   // 궤적 무적 — 못 가둔다
       owner[i] = ent.id;
       if (trail[i]) {               // 남의 궤적을 가둬버린 경우 — 그 주인은 죽는다
         const victim = ents[trail[i] - 1];
@@ -637,11 +676,39 @@ function capture(ent) {
         if (victim && victim.alive) kill(victim, ent, ent.name + '에게 포위당함');
       }
       paint(i);
+      claimed.push(i);
       gained++;
     }
   }
+  if (ent.fxWide) gained += widen(ent, claimed);
   recount();
   return gained;
+}
+
+// 점령 확대 — 이번에 가진 칸 바깥으로 테두리를 한 겹 더 두른다
+function widen(ent, claimed) {
+  ent.fxWide = false;
+  const ring = [];
+  for (const i of claimed) {
+    const gz = (i / GRID) | 0, gx = i - gz * GRID;
+    if (gx > 0)        ring.push(i - 1);
+    if (gx < GRID - 1) ring.push(i + 1);
+    if (gz > 0)        ring.push(i - GRID);
+    if (gz < GRID - 1) ring.push(i + GRID);
+  }
+  let n = 0;
+  for (const j of ring) {
+    if (owner[j] === ent.id) continue;
+    const victim = trail[j] ? ents[trail[j] - 1] : null;
+    if (victim && victim.alive && victim.fxInv > 0) continue;  // 무적 상대는 건드리지 않는다
+    if (victim) { trail[j] = 0; if (victim.alive) kill(victim, ent, ent.name + '에게 포위당함'); }
+    else if (trail[j]) trail[j] = 0;
+    owner[j] = ent.id;
+    paint(j);
+    n++;
+  }
+  trailDirty = true;
+  return n;
 }
 
 function kill(ent, by, why) {
@@ -651,6 +718,8 @@ function kill(ent, by, why) {
   ent.respawn = RESPAWN_SEC;
   clearTrailOf(ent);
   clearOwnedOf(ent);
+  ent.slots.fill(0);                     // 죽으면 들고 있던 스킬도 전부 잃는다
+  ent.fxBoost = 0; ent.fxInv = 0; ent.fxWide = false;
   recount();
 
   const reason = why || (by === ent ? '자기 궤적에 걸림'
@@ -722,6 +791,7 @@ function stepCell(ent, gx, gz) {
   ent.gx = gx; ent.gz = gz;
 
   const i = gz * GRID + gx;
+  takeItem(ent, i);                       // 빈 슬롯이 있으면 줍는다 (19 문서)
 
   const t = trail[i];
   if (t === ent.id) {
@@ -734,6 +804,11 @@ function stepCell(ent, gx, gz) {
   }
   if (t) {                                  // 남의 궤적을 밟았다 → 그 주인이 죽는다
     const victim = ents[t - 1];
+    if (victim && victim.fxInv > 0) {
+      // 궤적 무적 — 안 잘린다. 대신 이 칸은 내 것이 못 되므로 그냥 지나간다.
+      if (ent === me) toast(victim.name + ' 은(는) 지금 궤적 무적입니다');
+      return;
+    }
     if (victim) kill(victim, ent, ent.name + '에게 잡힘');
     else { trail[i] = 0; paint(i); }        // 주인이 없는 궤적은 지운다
     if (!ent.alive) return;
@@ -783,6 +858,98 @@ function recount() {
 }
 
 function share(ent) { return ent.cells / TOTAL; }
+
+// ═══ 스킬 아이템 ═════════════════════════════════════════
+// 맵에 주기적으로 떨어진다. 밟으면 바로 터지는 게 아니라 빈 슬롯에 들어가고,
+// 1/2/3 키로 꺼내 쓴다. 슬롯이 다 차 있으면 밟아도 안 줍고 그 자리에 그대로 남는다.
+// 온라인에서는 스폰·획득·발동·효과를 전부 방장이 계산하고 결과만 뿌린다.
+const SKILLS = [
+  null,
+  { key: 'boost',  name: '속도 부스트', icon: '⚡', rgb: [255, 205, 80],  sec: 6 },
+  { key: 'invuln', name: '궤적 무적',   icon: '🛡', rgb: [110, 195, 255], sec: 6 },
+  { key: 'wide',   name: '점령 확대',   icon: '▣',  rgb: [190, 140, 255], sec: 0 },
+  { key: 'recall', name: '순간 귀환',   icon: '↩',  rgb: [130, 240, 170], sec: 0 },
+];
+const SKILL_N = SKILLS.length - 1;
+
+const SLOTS      = 3;      // 슬롯 칸 수
+const ITEM_MAX   = 8;      // 맵에 동시에 놓이는 최대 개수
+const ITEM_EVERY = 4;      // 스폰 주기 (초)
+const BOOST_MUL  = 1.45;   // 속도 부스트 배수 (달리기 11 → 16.0 m/s)
+
+let items = [];            // [{ i: 셀 번호, k: 종류 }]
+let itemWait = 0;          // 다음 스폰까지 남은 시간
+let itemsDirty = false;
+
+const spdMul = (ent) => (ent.fxBoost > 0 ? BOOST_MUL : 1);
+
+function clearItems() { items = []; itemWait = 1.5; itemsDirty = true; }
+
+function spawnItem() {
+  for (let n = 0; n < 40; n++) {
+    const gx = 6 + ((Math.random() * (GRID - 12)) | 0);
+    const gz = 6 + ((Math.random() * (GRID - 12)) | 0);
+    const i = gz * GRID + gx;
+    if (owner[i] || trail[i]) continue;                  // 빈 땅에만 떨군다
+    if (items.some((o) => o.i === i)) continue;
+    items.push({ i, k: 1 + ((Math.random() * SKILL_N) | 0) });
+    itemsDirty = true;
+    return;
+  }
+}
+
+function tickItems(dt) {
+  itemWait -= dt;
+  if (itemWait > 0) return;
+  itemWait = ITEM_EVERY;
+  if (items.length < ITEM_MAX) spawnItem();
+}
+
+// 밟았다 — 빈 슬롯이 있을 때만 줍는다
+function takeItem(ent, i) {
+  if (!items.length) return;
+  const n = items.findIndex((o) => o.i === i);
+  if (n < 0) return;
+  const slot = ent.slots.indexOf(0);
+  if (slot < 0) return;                                  // 슬롯이 다 찼다 — 그대로 남는다
+  ent.slots[slot] = items[n].k;
+  items.splice(n, 1);
+  itemsDirty = true;
+  if (ent === me) toast(SKILLS[ent.slots[slot]].name + ' 획득 · ' + (slot + 1) + '번 칸');
+}
+
+function tickFx(ent, dt) {
+  if (ent.fxBoost > 0) ent.fxBoost = Math.max(0, ent.fxBoost - dt);
+  if (ent.fxInv > 0) ent.fxInv = Math.max(0, ent.fxInv - dt);
+}
+
+// 순간 귀환 — 그린 만큼 점령 처리하고 자기 영역으로 돌아간다
+function recall(ent) {
+  if (owner[ent.homeGz * GRID + ent.homeGx] !== ent.id) retargetHome(ent);
+  if (ent.trail.length) capture(ent);
+  const gx = ent.homeGx, gz = ent.homeGz;
+  ent.x = wxOf(gx); ent.z = wzOf(gz);
+  ent.gx = gx; ent.gz = gz;
+  ent.tgx = gx; ent.tgz = gz;
+  ent.phase = 'idle';
+  ent.warpT = netNow + 2000;                             // 온라인: 옛 좌표 보고를 잠시 막는다
+  if (ent === me) { pos.set(ent.x, EYE, ent.z); vel.set(0, 0, 0); camera.position.copy(pos); }
+}
+
+// 슬롯을 비우고 효과를 건다. 온라인에서는 방장만 이 함수를 돌린다.
+function useSlot(ent, slot) {
+  if (!ent || !ent.alive || matchOver) return;
+  if (!(slot >= 0 && slot < SLOTS)) return;
+  const k = ent.slots[slot];
+  if (!k) return;
+  ent.slots[slot] = 0;
+  const sk = SKILLS[k];
+  if (sk.key === 'boost') ent.fxBoost = Math.max(ent.fxBoost, sk.sec);
+  else if (sk.key === 'invuln') ent.fxInv = Math.max(ent.fxInv, sk.sec);
+  else if (sk.key === 'wide') ent.fxWide = true;
+  else if (sk.key === 'recall') recall(ent);
+  hostFeed(ent, sk.name + ' 발동');
+}
 
 // ═══ 봇 AI ═══════════════════════════════════════════════
 // 격자를 따라 한 칸씩 이동한다. 자유 각도로 돌아다니면 자기 궤적에 걸려 자멸하는데,
@@ -991,6 +1158,7 @@ function pickDir(b, size) {
       if (trail[i] === b.id) s -= 4;            // 내 궤적 쪽으로는 나가지 않는다
       else if (owner[i] === 0) s += 1.4;        // 무소유 빈 땅이 제일 좋다
       else if (owner[i] !== b.id) s += 0.9;     // 남의 땅 — 뺏으면 이득이 크다
+      if (itemAt(i)) s += 6;                    // 가는 길에 아이템이 있으면 그쪽으로
       // 상대의 출격 사거리 안이면 감점. 가까울수록 크게 깎는다.
       // 남의 땅이 탐나서 그 주인 코앞에 꼬리를 늘어놓던 게 16단계에서 고친 지점이다.
       for (let k = 0; k < foes.length; k++) {
@@ -1002,6 +1170,39 @@ function pickDir(b, size) {
     if (s > bestS) { bestS = s; bestD = d; }
   }
   return bestD;
+}
+
+const itemAt = (i) => items.some((o) => o.i === i);
+
+// 빈 슬롯이 있으면 가까운 아이템을 주우러 간다. 너무 멀면 하던 확장을 계속한다.
+function findItem(b, radius) {
+  if (b.slots.indexOf(0) < 0) return null;
+  let best = null, bd = radius + 1;
+  for (const o of items) {
+    const gz = (o.i / GRID) | 0, gx = o.i - gz * GRID;
+    const d = Math.abs(gx - b.gx) + Math.abs(gz - b.gz);
+    if (d < bd) { bd = d; best = { gx, gz, i: o.i }; }
+  }
+  return best;
+}
+
+// 지금 들고 있는 스킬 중 이 상황에 맞는 걸 꺼낸다. 배역마다 쓰는 때가 다르다.
+function botUseSkill(b, ai) {
+  const risky = b.trail.length > 25 && b.threat < ai.flee * 1.4;
+  for (let k = 0; k < SLOTS; k++) {
+    const id = b.slots[k];
+    if (!id) continue;
+    const key = SKILLS[id].key;
+    if (key === 'recall' && risky && b.trail.length > 60) { useSlot(b, k); return; }
+    if (key === 'invuln' && risky) { useSlot(b, k); return; }
+    if (key === 'boost' && (b.phase === 'hunt' || (b.phase === 'home' && risky))) { useSlot(b, k); return; }
+    if (key === 'wide' && !b.fxWide && b.phase === 'out' && b.trail.length > 20) { useSlot(b, k); return; }
+  }
+  // 슬롯이 꽉 찼는데 쓸 때가 아니면, 자리를 비우려고 제일 덜 급한 걸 쓴다
+  if (b.slots.indexOf(0) < 0) {
+    const k = b.slots.findIndex((id) => SKILLS[id].key === 'wide' || SKILLS[id].key === 'boost');
+    if (k >= 0) useSlot(b, k);
+  }
 }
 
 function planBot(b) {
@@ -1090,6 +1291,10 @@ function botPick(b) {
       } else b.phase = 'home';
     }
     if (b.trail.length > ai.maxTrail) b.phase = 'home';
+  } else if (b.phase === 'grab') {
+    b.huntT++;
+    if (!itemAt(b.preyI) || b.slots.indexOf(0) < 0) b.phase = 'out';   // 없어졌거나 슬롯이 찼다
+    else if (b.huntT > 90) b.phase = 'out';                            // 너무 오래 헤맸다
   } else if (b.phase === 'hunt') {
     b.huntT++;
     const ti = b.preyI;
@@ -1101,6 +1306,11 @@ function botPick(b) {
   // ── 판단 주기마다 한 번씩만 다시 생각한다 (주기는 봇마다 다르다) ──
   if (b.rethink) {
     b.rethink = false;
+    botUseSkill(b, ai);
+    if (b.phase === 'out') {
+      const it = findItem(b, 26);                     // 가까운 아이템은 주우러 들른다
+      if (it) { b.phase = 'grab'; b.huntT = 0; b.preyGx = it.gx; b.preyGz = it.gz; b.preyI = it.i; }
+    }
     if (b.phase !== 'home') {
       const foe = b.threat;
       if (b.trail.length > 12 && foe < ai.flee) {
@@ -1122,9 +1332,9 @@ function botPick(b) {
 
   // ── 가고 싶은 방향 순서 ──
   const order = [];
-  if (b.phase === 'hunt') {
+  if (b.phase === 'hunt' || b.phase === 'grab') {
     const ddx = b.preyGx - b.gx, ddz = b.preyGz - b.gz;
-    if (ddx === 0 && ddz === 0) b.phase = 'home';
+    if (ddx === 0 && ddz === 0) b.phase = b.phase === 'grab' ? 'out' : 'home';
     else if (Math.abs(ddx) >= Math.abs(ddz)) {
       if (ddx) order.push(ddx > 0 ? 0 : 2);
       if (ddz) order.push(ddz > 0 ? 1 : 3);
@@ -1198,6 +1408,7 @@ function urgency(b, ai) {
     if (b.trail.length > 60 || b.threat < ai.flee) return 0.85;
     return 0.4;
   }
+  if (b.phase === 'grab') return 0.45;      // 아이템은 남이 먼저 먹기 전에 — 조금 서두른다
   return 0.1;                      // 평시 확장 — 급할 것 없다
 }
 
@@ -1231,7 +1442,7 @@ function stepBot(b, dt) {
   const tx = wxOf(b.tgx), tz = wzOf(b.tgz);
   const dx = tx - b.x, dz = tz - b.z;
   const d = Math.hypot(dx, dz);
-  const step = (b.running ? BOT_RUN : BOT_WALK) * dt;
+  const step = (b.running ? BOT_RUN : BOT_WALK) * spdMul(b) * dt;
 
   if (d <= step || d < 1e-4) {
     b.x = tx; b.z = tz;
@@ -1274,6 +1485,7 @@ function initMatch(defs, secs, win) {
     e.tgx = gx | 0; e.tgz = gz | 0;
   });
   assignBrains();          // 봇마다 성격을 새로 뽑는다 — 매 판 배역이 달라진다
+  clearItems();            // 아이템은 매 경기 새로 깔린다
   paintAll();
   trailDirty = true;
   recount();
@@ -1308,6 +1520,25 @@ function syncTrailMesh() {
   mesh.instanceColor.needsUpdate = true;
 }
 
+function syncItems(now) {
+  const mesh = arena.itemMesh;
+  let n = 0;
+  for (const o of items) {
+    if (n >= arena.itemCap) break;
+    const gz = (o.i / GRID) | 0, gx = o.i - gz * GRID;
+    const c = SKILLS[o.k].rgb;
+    dummy.position.set(wxOf(gx), 1.25 + Math.sin(now / 340 + o.i) * 0.22, wzOf(gz));
+    dummy.rotation.set(0, now / 700 + o.i, 0.5);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(n, dummy.matrix);
+    mesh.instanceColor.setXYZ(n, c[0] / 255, c[1] / 255, c[2] / 255);
+    n++;
+  }
+  mesh.count = n;
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.instanceColor.needsUpdate = true;
+}
+
 function syncBodies() {
   arena.bodies.forEach((m, k) => {
     const e = ents[k];                 // 참가자가 4명 미만이면 빈 슬롯이 생긴다
@@ -1318,6 +1549,45 @@ function syncBodies() {
 }
 
 // ═══ 미니맵 ══════════════════════════════════════════════
+const slotsEl = document.getElementById('slots');
+const fxEl = document.getElementById('fx');
+
+// ── HUD ──
+const slotBoxes = [];
+for (let k = 0; k < SLOTS; k++) {
+  const box = document.createElement('div');
+  box.className = 'slot';
+  const no = document.createElement('span'); no.className = 'no'; no.textContent = k + 1;
+  const ic = document.createElement('span'); ic.className = 'ic';
+  const nm = document.createElement('span'); nm.className = 'nm';
+  box.append(no, ic, nm);
+  slotsEl.appendChild(box);
+  slotBoxes.push({ box, ic, nm });
+}
+
+function drawSlots() {
+  for (let k = 0; k < SLOTS; k++) {
+    const id = me.slots[k], sk = id ? SKILLS[id] : null;
+    const b = slotBoxes[k];
+    b.box.classList.toggle('has', !!sk);
+    b.ic.textContent = sk ? sk.icon : '·';
+    b.ic.style.color = sk ? 'rgb(' + sk.rgb.join(',') + ')' : 'rgba(255,255,255,.25)';
+    b.nm.textContent = sk ? sk.name : '빈 칸';
+    b.nm.classList.toggle('dim', !sk);
+  }
+  const on = [];
+  if (me.fxBoost > 0) on.push(['속도 부스트', me.fxBoost.toFixed(1) + '초']);
+  if (me.fxInv > 0) on.push(['궤적 무적', me.fxInv.toFixed(1) + '초']);
+  if (me.fxWide) on.push(['점령 확대', '다음 점령']);
+  fxEl.textContent = '';
+  for (const [nm, t] of on) {
+    const d = document.createElement('div'); d.className = 'e';
+    const s = document.createElement('span'); s.className = 't'; s.textContent = t;
+    d.append(s, document.createTextNode(nm));
+    fxEl.appendChild(d);
+  }
+}
+
 const mapEl = document.getElementById('map');
 const mapCtx = mapEl.getContext('2d');
 const mapBuf = document.createElement('canvas');
@@ -1338,6 +1608,13 @@ function drawMap(now) {
   mapCtx.translate(0, W); mapCtx.scale(1, -1);      // 텍스처 행 순서를 화면 기준으로 뒤집는다
   mapCtx.drawImage(mapBuf, 0, 0, W, W);
   mapCtx.restore();
+
+  for (const o of items) {
+    const gz = (o.i / GRID) | 0, gx = o.i - gz * GRID;
+    const c = SKILLS[o.k].rgb;
+    mapCtx.fillStyle = 'rgb(' + c.join(',') + ')';
+    mapCtx.fillRect((gx / GRID) * W - 1.5, (gz / GRID) * W - 1.5, 3.5, 3.5);
+  }
 
   for (const e of ents) {
     if (!e.alive) continue;
@@ -1389,6 +1666,8 @@ function showScreen(name) {
   timerEl.classList.toggle('on', name === 'game');
   mapEl.classList.toggle('on', name === 'game');
   feedEl.classList.toggle('on', name === 'game');
+  slotsEl.classList.toggle('on', name === 'game');
+  fxEl.classList.toggle('on', name === 'game');
   if (!in3d) { promptEl.classList.remove('on'); nearSpot = null; }
 
   if (name === 'game') {
@@ -1454,7 +1733,7 @@ function movePlayer(dt) {
 
   const len = Math.hypot(ix, iz);
   const running = !!(keys.ShiftLeft || keys.ShiftRight);
-  const speed = running ? RUN : WALK;
+  const speed = (running ? RUN : WALK) * spdMul(me);   // 속도 부스트 (19 문서)
   wish.set(len > 0 ? (ix / len) * speed : 0, 0, len > 0 ? (iz / len) * speed : 0);
 
   const a = ACCEL * dt * (onGround ? 1 : 0.5);
@@ -1480,6 +1759,9 @@ function movePlayer(dt) {
 function stepMatch(dt) {
   if (matchOver) return;
   if (online && !iamHost) return;      // 게스트는 방장이 보낸 결과만 그린다
+
+  tickItems(dt);
+  for (const e of ents) tickFx(e, dt);
 
   if (me.alive) {
     me.x = pos.x; me.z = pos.z;
@@ -1511,7 +1793,7 @@ function endMatch() {
     const cells = [];
     for (const i of dirtySet) cells.push(i, owner[i] | (trail[i] << 3));
     dirtySet.clear();
-    send({ t: 'relay', data: { k: 'e', t: 0, e: entPayload(), c: cells } });
+    send({ t: 'relay', data: { k: 'e', t: 0, e: entPayload(), c: cells, it: itemPayload() } });
     send({ t: 'end_game' });
   }
   const rank = ents.slice().sort((a, b) => b.cells - a.cells);
@@ -1591,7 +1873,17 @@ function entBySlot(id) { return ents.find((e) => e.id === id); }
 
 function entPayload() {
   return ents.map((e) => [e.id, Math.round(e.x * 20) / 20, Math.round(e.z * 20) / 20,
-                          e.alive ? 1 : 0, e.cells, e.deaths]);
+                          e.alive ? 1 : 0, e.cells, e.deaths,
+                          e.slots[0] | (e.slots[1] << 3) | (e.slots[2] << 6),
+                          Math.round(e.fxBoost * 10), Math.round(e.fxInv * 10), e.fxWide ? 1 : 0]);
+}
+
+// 아이템 목록은 통째로 보낸다. 최대 8개(숫자 16개)라 매 틱 보내도 부담이 없고,
+// 통째로 덮어쓰면 획득·스폰이 어긋날 일이 없다.
+function itemPayload() {
+  const a = [];
+  for (const o of items) a.push(o.i, o.k);
+  return a;
 }
 
 function netStartMatch(room, members) {
@@ -1649,7 +1941,8 @@ function hostTick(now) {
     }
   }
 
-  const payload = { k: 's', t: Math.max(0, matchTime), e: entPayload(), c: cells };
+  const payload = { k: 's', t: Math.max(0, matchTime), e: entPayload(), c: cells,
+                    it: itemPayload() };
   if (pendingFeed.length) { payload.f = pendingFeed; pendingFeed = []; }
   send({ t: 'relay', data: payload });
 }
@@ -1672,10 +1965,14 @@ function applyState(d) {
   for (const a of d.e) {
     const e = entBySlot(a[0]);
     if (!e) continue;
-    const [, x, z, alive, cells, deaths] = a;
+    const [, x, z, alive, cells, deaths, sl, fb, fi, fw] = a;
     const was = e.alive;
     e.cells = cells;
     e.alive = !!alive;
+    if (sl !== undefined) {                    // 슬롯·효과도 방장이 계산한 값을 그대로 쓴다
+      e.slots[0] = sl & 7; e.slots[1] = (sl >> 3) & 7; e.slots[2] = (sl >> 6) & 7;
+      e.fxBoost = fb / 10; e.fxInv = fi / 10; e.fxWide = !!fw;
+    }
     if (e === me) {
       // 죽었을 때와 되살아났을 때 둘 다 방장이 찍어 준 자리로 옮겨간다.
       // 되살아남을 안 보면 죽은 자리에 그대로 서 있게 되고, 방장은 시작 칸에
@@ -1698,6 +1995,11 @@ function applyState(d) {
       paint(i);
     }
     trailDirty = true;
+  }
+  if (d.it) {
+    items = [];
+    for (let k = 0; k < d.it.length; k += 2) items.push({ i: d.it[k], k: d.it[k + 1] });
+    itemsDirty = true;
   }
   if (d.f) for (const [slot, why] of d.f) { const e = entBySlot(slot); if (e) pushFeed(e, why); }
 }
@@ -1859,6 +2161,10 @@ function onNet(m) {
     if (!d || !online) return;
     if (d.k === 's' && !iamHost) applyState(d);
     else if (d.k === 'i' && iamHost) applyInput(m.from, d);
+    else if (d.k === 'u' && iamHost) {                     // 게스트가 1/2/3을 눌렀다
+      const e = ents.find((x) => x.netId === m.from);
+      if (e) useSlot(e, d.s | 0);
+    }
     else if (d.k === 'e' && !iamHost) { applyState(d); endMatch(); }
   }
   else if (m.t === 'left') myRoom = null;
@@ -2060,6 +2366,13 @@ addEventListener('keydown', (e) => {
   }
   if (screen === 'menu' || screen === 'result' || screen === 'room' || screen === 'create' || paused) return;
   if (e.code === 'KeyE' && screen === 'lobby') { interact(); return; }
+  if (screen === 'game' && (e.code === 'Digit1' || e.code === 'Digit2' || e.code === 'Digit3')) {
+    const slot = +e.code.slice(5) - 1;
+    // 온라인 게스트는 '몇 번 칸을 눌렀다'만 올린다. 계산은 방장이 한다.
+    if (online && !iamHost) send({ t: 'relay', data: { k: 'u', s: slot } });
+    else useSlot(me, slot);
+    return;
+  }
   keys[e.code] = true;
   if (e.code === 'Space') e.preventDefault();
 });
@@ -2117,6 +2430,7 @@ function drawHud(now, s) {
     const m = (t / 60) | 0, sec = (t % 60) | 0;
     timerEl.textContent = m + ':' + String(sec).padStart(2, '0');
     timerEl.classList.toggle('warn', t <= 30);
+    drawSlots();
     const tl = me.trail.length;
     const warn = tl ? ' · 궤적 ' + tl + '칸' : '';   // 길다고 죽지는 않는다. 대신 봇이 노린다
     stat.textContent = '내 순위 ' + (rank.indexOf(me) + 1) + '위 · ' +
@@ -2148,6 +2462,7 @@ function loop(now) {
   }
   if (screen === 'game') {
     if (trailDirty) { syncTrailMesh(); trailDirty = false; }
+    syncItems(now);
     syncBodies();
     if (texDirty) { gridTex.needsUpdate = true; texDirty = false; }
     drawMap(now);
