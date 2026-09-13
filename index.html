@@ -21,6 +21,25 @@
           gap:18px;padding:24px;text-align:center;
           background:rgba(8,10,14,.86);backdrop-filter:blur(3px)}
   .screen.on{display:flex}
+
+  /* 설정 — 메뉴 위에도, 일시정지 위에도 겹쳐 뜬다 */
+  #settings{z-index:16}
+  #settings .box{width:min(420px,92vw);display:flex;flex-direction:column;gap:14px;
+                 padding:22px;border-radius:14px;border:1px solid var(--line);background:#12161d}
+  #settings .row{display:flex;align-items:center;gap:12px}
+  #settings .row .lb{width:82px;text-align:left;font-size:13px;color:var(--dim);flex:none}
+  #settings .row .val{width:42px;text-align:right;font-size:13px;font-variant-numeric:tabular-nums}
+  #settings input[type=range]{flex:1;appearance:none;height:5px;border-radius:3px;
+                              background:#2a313c;outline:none}
+  #settings input[type=range]::-webkit-slider-thumb{appearance:none;width:16px;height:16px;
+       border-radius:50%;background:#e8edf5;border:none;cursor:pointer}
+  #settings input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;
+       background:#e8edf5;border:none;cursor:pointer}
+  #settings .row.mute{justify-content:space-between}
+  #settings .tog{padding:8px 16px;border-radius:8px;border:1px solid var(--line);
+                 background:#161a21;font:inherit;font-size:13px;font-weight:600}
+  #settings .tog.on{background:#7a2f2f;border-color:#a04a4a}
+  #settings .note{font-size:12px;color:var(--dim);line-height:1.5}
   .screen h1{margin:0;font-size:clamp(28px,7vw,46px);letter-spacing:-.03em;font-weight:700}
   .screen h2{margin:0;font-size:clamp(20px,5vw,30px);letter-spacing:-.02em;font-weight:700}
   .screen p{margin:0;color:var(--dim);font-size:14px;line-height:1.8}
@@ -202,6 +221,7 @@
   <div class="btns">
     <button class="btn primary" id="btn-bot">봇과 플레이<span class="sub">봇 3명과 3분 승부</span></button>
     <button class="btn" id="btn-online">온라인으로 플레이<span class="sub">로비를 걸어다니며 방 찾기</span></button>
+    <button class="btn" id="btn-settings">설정<span class="sub">소리 크기 조절</span></button>
   </div>
 </section>
 
@@ -210,8 +230,26 @@
   <p id="pause-text">마우스 잠금이 해제되었습니다</p>
   <div class="btns">
     <button class="btn primary" id="btn-resume">계속하기</button>
+    <button class="btn" id="btn-settings-pause">설정</button>
     <button class="btn" id="btn-tomenu">메뉴로 나가기</button>
   </div>
+</section>
+
+<section id="settings" class="screen">
+  <h2>설정</h2>
+  <div class="box">
+    <div class="row"><span class="lb">전체</span>
+      <input type="range" id="vol-master" min="0" max="100"><span class="val" id="val-master"></span></div>
+    <div class="row"><span class="lb">효과음</span>
+      <input type="range" id="vol-sfx" min="0" max="100"><span class="val" id="val-sfx"></span></div>
+    <div class="row"><span class="lb">배경음</span>
+      <input type="range" id="vol-bgm" min="0" max="100"><span class="val" id="val-bgm"></span></div>
+    <div class="row mute"><span class="lb">음소거</span>
+      <button class="tog" id="btn-mute">끄기</button></div>
+    <p class="note">소리는 전부 이 자리에서 만들어 낸다. 받아오는 음원 파일은 없다.<br>
+      값은 이번 접속 동안만 유지된다.</p>
+  </div>
+  <div class="btns"><button class="btn primary" id="btn-settings-close">닫기</button></div>
 </section>
 
 <section id="screen-create" class="screen">
@@ -685,6 +723,7 @@ function capture(ent) {
   }
   if (ent.fxWide) gained += widen(ent, claimed);
   recount();
+  if (ent === me) sndCapture(gained);
   return gained;
 }
 
@@ -729,8 +768,8 @@ function kill(ent, by, why) {
                        : by ? by.name + '에게 잡힘' : '사망');
   pushFeed(ent, reason);
   if (online && iamHost) pendingFeed.push([ent.id, reason]);
-  if (ent === me) toast(reason);
-  else if (by === me) toast(ent.name + '을(를) 잡았습니다');
+  if (ent === me) { toast(reason); sndDeath(); }
+  else if (by === me) { toast(ent.name + '을(를) 잡았습니다'); sndKill(); }
 }
 
 function freeCellNear(gx, gz) {
@@ -918,7 +957,7 @@ function takeItem(ent, i) {
   ent.slots[slot] = items[n].k;
   items.splice(n, 1);
   itemsDirty = true;
-  if (ent === me) toast(SKILLS[ent.slots[slot]].name + ' 획득 · ' + (slot + 1) + '번 칸');
+  if (ent === me) { toast(SKILLS[ent.slots[slot]].name + ' 획득 · ' + (slot + 1) + '번 칸'); sndItem(); }
 }
 
 function tickFx(ent, dt) {
@@ -951,6 +990,7 @@ function useSlot(ent, slot) {
   else if (sk.key === 'invuln') ent.fxInv = Math.max(ent.fxInv, sk.sec);
   else if (sk.key === 'wide') ent.fxWide = true;
   else if (sk.key === 'recall') recall(ent);
+  if (ent === me) sndSkill(k);
   hostFeed(ent, sk.name + ' 발동');
 }
 
@@ -1497,6 +1537,7 @@ function initMatch(defs, secs, win) {
   matchTime = matchSecs;
   matchOver = false;
   feedEl.textContent = '';
+  audioResume(); sndStart(); bgmStart();      // 봇전·온라인 공통
   arena.spawn.set(me.x, EYE, me.z);
 }
 
@@ -1756,7 +1797,7 @@ function showScreen(name) {
   }
   else if (name === 'lobby') enterWorld('lobby');
   else releaseLock();
-  if (name === 'menu') { netEndMatch(); netClose(); }
+  if (name === 'menu') { netEndMatch(); netClose(); bgmStop(); }
 }
 
 const pauseTitle = document.getElementById('pause-title');
@@ -1791,6 +1832,8 @@ function enterWorld(name) {
   camera.rotation.set(pitch, yaw, 0);
 }
 
+let wasRunning = false;
+
 function movePlayer(dt) {
   // 죽어 있는 동안에는 제자리다. 시신이 걸어다니면 방장이 잡아 준 리스폰 자리와 어긋나고,
   // 게스트에서는 그 어긋난 좌표가 그대로 보고돼 없는 궤적이 그어진다 (17 문서).
@@ -1812,6 +1855,8 @@ function movePlayer(dt) {
 
   const len = Math.hypot(ix, iz);
   const running = !!(keys.ShiftLeft || keys.ShiftRight);
+  if (running && !wasRunning && len > 0) sndRun();     // 달리기로 바꾼 순간에만
+  wasRunning = running && len > 0;
   const speed = (running ? RUN : WALK) * spdMul(me);   // 속도 부스트 (19 문서)
   wish.set(len > 0 ? (ix / len) * speed : 0, 0, len > 0 ? (iz / len) * speed : 0);
 
@@ -1878,6 +1923,8 @@ function endMatch() {
   const rank = ents.slice().sort((a, b) => b.cells - a.cells);
   const winner = rank[0];
 
+  bgmStop();
+  if (winner === me) sndWin(); else sndLose();
   document.getElementById('result-title').textContent = winner === me ? '승리!' : '패배';
   document.getElementById('result-sub').textContent = matchTime <= 0
     ? '제한시간 종료'
@@ -2128,6 +2175,240 @@ function checkSilent(now) {
     if (now - e.seen > SILENT_MS) setWaiting(e, true, '응답 없음 — 연결을 확인하세요');
   }
 }
+
+// ═══ 소리 ═══════════════════════════════════════════════
+// 전부 Web Audio로 그 자리에서 만들어 낸다. 받아오는 음원 파일은 없다 —
+// 저작권 문제도 없고 로딩도 없다.
+// 소리가 안 되는 환경(자동재생 차단·오디오 장치 없음)에서도 게임은 그대로 돌아야 하므로
+// 바깥으로 나가는 모든 길목을 try/catch로 막았다. 실패하면 조용히 무음이 된다.
+const audio = {
+  ctx: null, master: null, sfxBus: null, bgmBus: null,
+  vol: { master: 0.7, sfx: 0.8, bgm: 0.35 },
+  muted: false, ok: false,
+};
+
+function audioInit() {
+  if (audio.ctx || audio.ctx === false) return;
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) { audio.ctx = false; return; }
+    const ctx = new AC();
+    const master = ctx.createGain(), sfxBus = ctx.createGain(), bgmBus = ctx.createGain();
+    sfxBus.connect(master); bgmBus.connect(master); master.connect(ctx.destination);
+    audio.ctx = ctx; audio.master = master; audio.sfxBus = sfxBus; audio.bgmBus = bgmBus;
+    audio.ok = true;
+    applyVolume();
+  } catch (e) { audio.ctx = false; audio.ok = false; }
+}
+
+// 브라우저는 사용자가 한 번 누르기 전에는 소리를 못 내게 막는다.
+// 시작·참가·버튼 어디서든 첫 클릭에 여기를 지나간다.
+function audioResume() {
+  audioInit();
+  try { if (audio.ok && audio.ctx.state === 'suspended') audio.ctx.resume(); } catch (e) {}
+}
+
+function applyVolume() {
+  if (!audio.ok) return;
+  try {
+    audio.master.gain.value = audio.muted ? 0 : audio.vol.master;
+    audio.sfxBus.gain.value = audio.vol.sfx;
+    audio.bgmBus.gain.value = audio.vol.bgm;
+  } catch (e) {}
+}
+
+// ── 소리 재료 ──
+// 톤 하나: 파형 · 시작 주파수 → 끝 주파수 · 길이 · 크기
+function tone(type, f0, f1, dur, gain, delay, bus) {
+  if (!audio.ok) return;
+  try {
+    const ctx = audio.ctx, t = ctx.currentTime + (delay || 0);
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(f0, t);
+    if (f1 && f1 !== f0) o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, gain), t + Math.min(0.012, dur * 0.35));
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(bus || audio.sfxBus);
+    o.start(t); o.stop(t + dur + 0.03);
+  } catch (e) {}
+}
+
+// 잡음 한 줌: 발소리·사망처럼 음정이 없는 소리에 쓴다
+function noise(dur, gain, cutoff, delay) {
+  if (!audio.ok) return;
+  try {
+    const ctx = audio.ctx, t = ctx.currentTime + (delay || 0);
+    const n = Math.max(1, Math.floor(ctx.sampleRate * dur));
+    const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = cutoff || 1200;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(gain, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(f); f.connect(g); g.connect(audio.sfxBus);
+    src.start(t); src.stop(t + dur + 0.02);
+  } catch (e) {}
+}
+
+// ── 사건별 소리 ──
+// 점령: 먹은 칸이 많을수록 높고 길게 — 얼마나 크게 먹었는지가 귀로 들린다
+function sndCapture(cells) {
+  const big = Math.min(1, (cells || 0) / 900);
+  const base = 300 + big * 260;
+  const dur = 0.10 + big * 0.10;
+  tone('triangle', base, base * 1.5, dur, 0.22, 0);
+  tone('triangle', base * 1.5, base * 2, dur, 0.18, dur * 0.9);
+  if (big > 0.45) tone('triangle', base * 2, base * 2.5, dur, 0.16, dur * 1.8);
+}
+function sndKill()  { tone('square', 880, 180, 0.12, 0.20); noise(0.10, 0.16, 2600, 0.02); }
+function sndDeath() { tone('sawtooth', 300, 60, 0.50, 0.22); noise(0.34, 0.18, 700); }
+function sndItem()  { tone('sine', 660, 660, 0.06, 0.18); tone('sine', 990, 990, 0.09, 0.18, 0.06); }
+function sndSkill(k) {
+  const f = [0, 520, 420, 620, 340][k] || 480;
+  tone('sawtooth', f, f * 2.1, 0.16, 0.18);
+  tone('sine', f * 2, f * 3, 0.12, 0.10, 0.05);
+}
+function sndRun()   { noise(0.16, 0.09, 900); }
+function sndWarn()  { tone('square', 560, 560, 0.07, 0.13); tone('square', 460, 460, 0.09, 0.13, 0.10); }
+function sndStart() { [392, 523, 659].forEach((f, i) => tone('triangle', f, f, 0.14, 0.20, i * 0.11)); }
+function sndWin()   { [523, 659, 784, 1047].forEach((f, i) => tone('triangle', f, f, 0.20, 0.20, i * 0.13)); }
+function sndLose()  { [440, 392, 330, 262].forEach((f, i) => tone('sawtooth', f, f, 0.22, 0.15, i * 0.14)); }
+function sndClick() { tone('square', 300, 220, 0.04, 0.10); }
+
+// 경고는 겹쳐 울리면 시끄럽다. 최소 간격을 둔다.
+let warnAt = 0, warnLook = 0;
+
+// 내 궤적이 길게 드러나 있고 거기에 적이 붙었으면 울린다.
+// 궤적 전체를 매 프레임 훑으면 비싸므로 0.4초에 한 번만 본다.
+function warnCheck(now) {
+  if (!me.alive || now - warnLook < 400) return;
+  warnLook = now;
+  const len = me.trail.length;
+  if (len < 40) return;                       // 짧으면 위험할 것도 없다
+  let near = Infinity;
+  for (const e of ents) {
+    if (e === me || !e.alive) continue;
+    const ex = gxOf(e.x), ez = gzOf(e.z);
+    const st = 1 + ((len / 120) | 0);          // 길면 띄엄띄엄 본다
+    for (let k = 0; k < len; k += st) {
+      const i = me.trail[k], gz = (i / GRID) | 0, gx = i - gz * GRID;
+      const d = Math.abs(gx - ex) + Math.abs(gz - ez);
+      if (d < near) near = d;
+    }
+  }
+  if (near <= 18 || len > 260) {
+    if (now - warnAt < 1800) return;
+    warnAt = now;
+    sndWarn();
+  }
+}
+
+// ── 배경음 ──
+// 짧은 신스 패턴을 계속 돈다. 남은 시간이 30초 이하로 내려가면 템포가 올라간다.
+const BGM_BASS = [0, 0, 7, 5, 3, 3, 10, 7];         // 반음 단위
+const BGM_LEAD = [12, 15, 19, 15, 12, 10, 12, 15];
+const bgmState = { on: false, step: 0, next: 0, fast: false, timer: 0 };
+const semi = (n) => 110 * Math.pow(2, n / 12);
+
+function bgmStart() {
+  if (!audio.ok || bgmState.on) return;
+  bgmState.on = true; bgmState.step = 0; bgmState.fast = false;
+  try { bgmState.next = audio.ctx.currentTime + 0.06; } catch (e) {}
+}
+function bgmStop() { bgmState.on = false; }
+
+function bgmStep(t, k) {
+  if (!audio.ok) return;
+  try {
+    const ctx = audio.ctx;
+    const b = semi(BGM_BASS[k % BGM_BASS.length]);
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = 'triangle'; o.frequency.setValueAtTime(b, t);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.30, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.26);
+    o.connect(g); g.connect(audio.bgmBus);
+    o.start(t); o.stop(t + 0.3);
+
+    if (k % 2 === 0) {                                  // 리드는 두 박에 한 번
+      const l = semi(BGM_LEAD[(k >> 1) % BGM_LEAD.length] + 12);
+      const o2 = ctx.createOscillator(), g2 = ctx.createGain();
+      o2.type = 'square'; o2.frequency.setValueAtTime(l, t);
+      g2.gain.setValueAtTime(0.0001, t);
+      g2.gain.exponentialRampToValueAtTime(0.10, t + 0.015);
+      g2.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+      o2.connect(g2); g2.connect(audio.bgmBus);
+      o2.start(t); o2.stop(t + 0.22);
+    }
+  } catch (e) {}
+}
+
+// 렌더 루프는 창이 뒤로 밀리면 느려진다. 배경음은 따로 돌린다.
+function bgmPump() {
+  if (!audio.ok || !bgmState.on) return;
+  try {
+    const ctx = audio.ctx;
+    if (ctx.state !== 'running') return;
+    bgmState.fast = screen === 'game' && !matchOver && matchTime <= 30;
+    const beat = bgmState.fast ? 0.21 : 0.28;
+    if (bgmState.next < ctx.currentTime) bgmState.next = ctx.currentTime + 0.02;
+    while (bgmState.next < ctx.currentTime + 0.35) {
+      bgmStep(bgmState.next, bgmState.step++);
+      bgmState.next += beat;
+    }
+  } catch (e) {}
+}
+setInterval(bgmPump, 90);
+
+// ── 설정 화면 ──
+const setEl = document.getElementById('settings');
+const VOLS = [['master', 'vol-master', 'val-master'], ['sfx', 'vol-sfx', 'val-sfx'],
+              ['bgm', 'vol-bgm', 'val-bgm']];
+const muteBtn = document.getElementById('btn-mute');
+
+function drawSettings() {
+  for (const [key, sid, vid] of VOLS) {
+    const pct = Math.round(audio.vol[key] * 100);
+    document.getElementById(sid).value = pct;
+    document.getElementById(vid).textContent = pct;
+  }
+  muteBtn.textContent = audio.muted ? '켜기' : '끄기';
+  muteBtn.classList.toggle('on', audio.muted);
+}
+
+for (const [key, sid, vid] of VOLS) {
+  document.getElementById(sid).addEventListener('input', (e) => {
+    audio.vol[key] = (+e.target.value || 0) / 100;
+    document.getElementById(vid).textContent = Math.round(audio.vol[key] * 100);
+    applyVolume();                                   // 끌자마자 바로 들린다
+  });
+  // 슬라이더를 놓을 때 지금 크기를 귀로 확인시켜 준다
+  document.getElementById(sid).addEventListener('change', () => {
+    audioResume();
+    if (key === 'bgm') { if (!bgmState.on) { bgmStart(); setTimeout(bgmStop, 900); } }
+    else sndItem();
+  });
+}
+muteBtn.addEventListener('click', () => {
+  audioResume();
+  audio.muted = !audio.muted;
+  applyVolume(); drawSettings();
+  if (!audio.muted) sndClick();
+});
+
+let setFrom = 'menu';
+function openSettings() {
+  audioResume();
+  setFrom = screen;
+  drawSettings();
+  setEl.classList.add('on');
+}
+function closeSettings() { setEl.classList.remove('on'); }
+const settingsOpen = () => setEl.classList.contains('on');
 
 // ═══ 킬로그 ═════════════════════════════════════════════
 // "왜 갑자기 사라졌는지"가 안 보이면 버그처럼 느껴진다. 사유를 남겨 준다.
@@ -2400,6 +2681,15 @@ function interact() {
 }
 
 // ═══ 버튼 ════════════════════════════════════════════════
+// 어떤 버튼을 누르든 첫 클릭에 여기를 지나 오디오가 깨어난다 (자동재생 정책)
+addEventListener('pointerdown', (e) => {
+  if (!e.target.closest) return;
+  if (e.target.closest('.btn') || e.target.closest('.tog')) { audioResume(); sndClick(); }
+}, true);
+
+document.getElementById('btn-settings').addEventListener('click', openSettings);
+document.getElementById('btn-settings-pause').addEventListener('click', openSettings);
+document.getElementById('btn-settings-close').addEventListener('click', closeSettings);
 document.getElementById('btn-bot').addEventListener('click', () => enter3d('game'));
 document.getElementById('btn-online').addEventListener('click', () => { netConnect(); enter3d('lobby'); });
 document.getElementById('btn-room-leave').addEventListener('click', leaveRoom);
@@ -2418,6 +2708,7 @@ createField.addEventListener('keydown', (e) => {
 resumeBtn.addEventListener('click', requestLock);
 SCREENS.pause.addEventListener('click', (e) => {
   if (e.target.closest('.btn')) return;   // 버튼은 각자 처리
+  if (settingsOpen()) return;             // 설정 창이 떠 있으면 잠그지 않는다
   requestLock();
 });
 document.getElementById('btn-tomenu').addEventListener('click', () => showScreen('menu'));
@@ -2440,6 +2731,7 @@ function clearKeys() { for (const k in keys) keys[k] = false; }
 
 addEventListener('keydown', (e) => {
   if (e.code === 'Escape') {
+    if (settingsOpen()) { closeSettings(); return; }
     if (locked) return;
     if (screen === 'create') enter3d('lobby');
     else if (screen === 'room') leaveRoom();
@@ -2554,6 +2846,7 @@ function loop(now) {
   if (screen === 'game' && (active || (online && iamHost && !matchOver))) stepMatch(dt);
   // 게스트는 판정을 안 하는 대신, 지나는 칸을 화면에만 미리 깔아 둔다 (22 문서)
   if (screen === 'game' && online && !iamHost) predictTrail(now);
+  if (screen === 'game' && !matchOver) warnCheck(now);
   if (online && screen === 'game' && !matchOver) {
     // 게스트의 위치 보고를 포인터 잠금에 묶으면 안 된다. 창이 뒤로 밀리거나
     // [참가하기]를 아직 안 누른 게스트는 방장에게 아무 것도 못 보내고,
