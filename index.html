@@ -640,7 +640,7 @@ function makeEnt(slot, name, bot, netId) {
     ai: null, shapeName: '', think: 0, rethink: false, huntT: 0,   // 13단계 봇 성격·판단 주기
     running: false, threat: Infinity,                              // 15단계 봇 달리기
     seen: 0, waiting: false, warpT: 0,                             // 17단계 온라인 보고 상태
-    slots: [0, 0, 0], fxBoost: 0, fxInv: 0, fxWide: false,         // 19단계 스킬 슬롯·효과
+    slots: [0, 0, 0], fxBoost: 0, fxInv: 0, fxWide: 0,             // 19단계 스킬 슬롯·효과
     preyGx: 0, preyGz: 0, preyI: undefined,
     homeX: 0, homeZ: 0, homeGx: 0, homeGz: 0,
   };
@@ -709,10 +709,9 @@ function capture(ent) {
   for (let i = 0; i < TOTAL; i++) {
     if (!seen[i] && owner[i] !== ent.id) {
       const guard = trail[i] ? ents[trail[i] - 1] : null;
-      if (guard && guard.alive && guard.fxInv > 0) continue;   // 궤적 무적 — 못 가둔다
-      owner[i] = ent.id;
-      if (trail[i]) {               // 남의 궤적을 가둬버린 경우 — 그 주인은 죽는다
-        const victim = ents[trail[i] - 1];
+      owner[i] = ent.id;            // 땅은 언제나 가져간다 — 무적은 '안 죽는다'지 '땅을 지킨다'가 아니다
+      if (trail[i] && !(guard && guard.alive && guard.fxInv > 0)) {
+        const victim = ents[trail[i] - 1];    // 무적이 아니면 가둔 것이고, 그 주인은 죽는다
         trail[i] = 0;
         if (victim && victim.alive) kill(victim, ent, ent.name + '에게 포위당함');
       }
@@ -721,33 +720,41 @@ function capture(ent) {
       gained++;
     }
   }
-  if (ent.fxWide) gained += widen(ent, claimed);
+  if (ent.fxWide > 0) gained += widen(ent, claimed);   // 지속 시간 동안에는 점령마다 붙는다
   recount();
   if (ent === me) sndCapture(gained);
   return gained;
 }
 
-// 점령 확대 — 이번에 가진 칸 바깥으로 테두리를 한 겹 더 두른다
+// 점령 확대 — 이번에 가진 칸 바깥으로 테두리를 WIDE_RINGS겹 더 두른다.
+// 한 겹을 두른 뒤 그 겹을 다시 바깥으로 밀어 다음 겹을 만든다.
 function widen(ent, claimed) {
-  ent.fxWide = false;
-  const ring = [];
-  for (const i of claimed) {
-    const gz = (i / GRID) | 0, gx = i - gz * GRID;
-    if (gx > 0)        ring.push(i - 1);
-    if (gx < GRID - 1) ring.push(i + 1);
-    if (gz > 0)        ring.push(i - GRID);
-    if (gz < GRID - 1) ring.push(i + GRID);
-  }
-  let n = 0;
-  for (const j of ring) {
-    if (owner[j] === ent.id) continue;
-    const victim = trail[j] ? ents[trail[j] - 1] : null;
-    if (victim && victim.alive && victim.fxInv > 0) continue;  // 무적 상대는 건드리지 않는다
-    if (victim) { trail[j] = 0; if (victim.alive) kill(victim, ent, ent.name + '에게 포위당함'); }
-    else if (trail[j]) trail[j] = 0;
-    owner[j] = ent.id;
-    paint(j);
-    n++;
+  let n = 0, front = claimed;
+  for (let r = 0; r < WIDE_RINGS; r++) {
+    const ring = [];
+    for (const i of front) {
+      const gz = (i / GRID) | 0, gx = i - gz * GRID;
+      if (gx > 0)        ring.push(i - 1);
+      if (gx < GRID - 1) ring.push(i + 1);
+      if (gz > 0)        ring.push(i - GRID);
+      if (gz < GRID - 1) ring.push(i + GRID);
+    }
+    const added = [];
+    for (const j of ring) {
+      if (owner[j] === ent.id) continue;
+      const victim = trail[j] ? ents[trail[j] - 1] : null;
+      if (victim && victim.alive && victim.fxInv > 0) {
+        owner[j] = ent.id;                    // 땅은 가져간다 (무적은 죽지 않을 뿐이다)
+      } else {
+        if (victim) { trail[j] = 0; if (victim.alive) kill(victim, ent, ent.name + '에게 포위당함'); }
+        else if (trail[j]) trail[j] = 0;
+        owner[j] = ent.id;
+      }
+      paint(j);
+      added.push(j);
+      n++;
+    }
+    front = added;
   }
   trailDirty = true;
   return n;
@@ -761,7 +768,7 @@ function kill(ent, by, why) {
   clearTrailOf(ent);
   clearOwnedOf(ent);
   ent.slots.fill(0);                     // 죽으면 들고 있던 스킬도 전부 잃는다
-  ent.fxBoost = 0; ent.fxInv = 0; ent.fxWide = false;
+  ent.fxBoost = 0; ent.fxInv = 0; ent.fxWide = 0;
   recount();
 
   const reason = why || (by === ent ? '자기 궤적에 걸림'
@@ -841,6 +848,7 @@ function stepCell(ent, gx, gz) {
     // 좁게 꺾거나 지그재그로 가면 방금 지난 칸을 다시 밟게 되는데 그건 주행이지 사고가 아니다.
     // 죽어야 하는 건 '뒤에 남겨 둔 옛 궤적을 가로지를 때'뿐이다 (18 문서).
     if (isFreshTrail(ent, i)) return;
+    if (ent.fxInv > 0) return;             // 궤적 무적 — 자기 궤적을 밟아도 안 죽는다 (19-b)
     kill(ent, ent, '자기 궤적에 걸림');
     return;
   }
@@ -907,9 +915,9 @@ function share(ent) { return ent.cells / TOTAL; }
 // 온라인에서는 스폰·획득·발동·효과를 전부 방장이 계산하고 결과만 뿌린다.
 const SKILLS = [
   null,
-  { key: 'boost',  name: '속도 부스트', icon: '⚡', rgb: [255, 205, 80],  sec: 6 },
-  { key: 'invuln', name: '궤적 무적',   icon: '🛡', rgb: [110, 195, 255], sec: 6 },
-  { key: 'wide',   name: '점령 확대',   icon: '▣',  rgb: [190, 140, 255], sec: 0 },
+  { key: 'boost',  name: '속도 부스트', icon: '⚡', rgb: [255, 205, 80],  sec: 5 },
+  { key: 'invuln', name: '궤적 무적',   icon: '🛡', rgb: [110, 195, 255], sec: 10 },
+  { key: 'wide',   name: '점령 확대',   icon: '▣',  rgb: [190, 140, 255], sec: 10 },
   { key: 'recall', name: '순간 귀환',   icon: '↩',  rgb: [130, 240, 170], sec: 0 },
 ];
 const SKILL_N = SKILLS.length - 1;
@@ -917,7 +925,8 @@ const SKILL_N = SKILLS.length - 1;
 const SLOTS      = 3;      // 슬롯 칸 수
 const ITEM_MAX   = 8;      // 맵에 동시에 놓이는 최대 개수
 const ITEM_EVERY = 4;      // 스폰 주기 (초)
-const BOOST_MUL  = 1.45;   // 속도 부스트 배수 (달리기 11 → 16.0 m/s)
+const BOOST_MUL  = 2;      // 속도 부스트 배수 — 달리기 11 → 22 m/s (걷기 6 → 12)
+const WIDE_RINGS = 2;      // 점령 확대가 두르는 테두리 겹 수
 
 let items = [];            // [{ i: 셀 번호, k: 종류 }]
 let itemWait = 0;          // 다음 스폰까지 남은 시간
@@ -963,6 +972,7 @@ function takeItem(ent, i) {
 function tickFx(ent, dt) {
   if (ent.fxBoost > 0) ent.fxBoost = Math.max(0, ent.fxBoost - dt);
   if (ent.fxInv > 0) ent.fxInv = Math.max(0, ent.fxInv - dt);
+  if (ent.fxWide > 0) ent.fxWide = Math.max(0, ent.fxWide - dt);
 }
 
 // 순간 귀환 — 그린 만큼 점령 처리하고 자기 영역으로 돌아간다
@@ -988,7 +998,7 @@ function useSlot(ent, slot) {
   const sk = SKILLS[k];
   if (sk.key === 'boost') ent.fxBoost = Math.max(ent.fxBoost, sk.sec);
   else if (sk.key === 'invuln') ent.fxInv = Math.max(ent.fxInv, sk.sec);
-  else if (sk.key === 'wide') ent.fxWide = true;
+  else if (sk.key === 'wide') ent.fxWide = Math.max(ent.fxWide, sk.sec);
   else if (sk.key === 'recall') recall(ent);
   if (ent === me) sndSkill(k);
   hostFeed(ent, sk.name + ' 발동');
@@ -1239,7 +1249,7 @@ function botUseSkill(b, ai) {
     if (key === 'recall' && risky && b.trail.length > 60) { useSlot(b, k); return; }
     if (key === 'invuln' && risky) { useSlot(b, k); return; }
     if (key === 'boost' && (b.phase === 'hunt' || (b.phase === 'home' && risky))) { useSlot(b, k); return; }
-    if (key === 'wide' && !b.fxWide && b.phase === 'out' && b.trail.length > 20) { useSlot(b, k); return; }
+    if (key === 'wide' && b.fxWide <= 0 && b.phase === 'out' && b.trail.length > 20) { useSlot(b, k); return; }
   }
   // 슬롯이 꽉 찼는데 쓸 때가 아니면, 자리를 비우려고 제일 덜 급한 걸 쓴다
   if (b.slots.indexOf(0) < 0) {
@@ -1698,7 +1708,7 @@ function drawSlots() {
   const on = [];
   if (me.fxBoost > 0) on.push(['속도 부스트', me.fxBoost.toFixed(1) + '초']);
   if (me.fxInv > 0) on.push(['궤적 무적', me.fxInv.toFixed(1) + '초']);
-  if (me.fxWide) on.push(['점령 확대', '다음 점령']);
+  if (me.fxWide > 0) on.push(['점령 확대', me.fxWide.toFixed(1) + '초']);
   fxEl.textContent = '';
   for (const [nm, t] of on) {
     const d = document.createElement('div'); d.className = 'e';
@@ -2001,7 +2011,7 @@ function entPayload() {
   return ents.map((e) => [e.id, Math.round(e.x * 20) / 20, Math.round(e.z * 20) / 20,
                           e.alive ? 1 : 0, e.cells, e.deaths,
                           e.slots[0] | (e.slots[1] << 3) | (e.slots[2] << 6),
-                          Math.round(e.fxBoost * 10), Math.round(e.fxInv * 10), e.fxWide ? 1 : 0]);
+                          Math.round(e.fxBoost * 10), Math.round(e.fxInv * 10), Math.round(e.fxWide * 10)]);
 }
 
 // 아이템 목록은 통째로 보낸다. 최대 8개(숫자 16개)라 매 틱 보내도 부담이 없고,
@@ -2099,7 +2109,7 @@ function applyState(d) {
     e.alive = !!alive;
     if (sl !== undefined) {                    // 슬롯·효과도 방장이 계산한 값을 그대로 쓴다
       e.slots[0] = sl & 7; e.slots[1] = (sl >> 3) & 7; e.slots[2] = (sl >> 6) & 7;
-      e.fxBoost = fb / 10; e.fxInv = fi / 10; e.fxWide = !!fw;
+      e.fxBoost = fb / 10; e.fxInv = fi / 10; e.fxWide = fw / 10;
     }
     if (e === me) {
       // 죽었을 때와 되살아났을 때 둘 다 방장이 찍어 준 자리로 옮겨간다.
