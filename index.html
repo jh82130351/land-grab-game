@@ -1497,12 +1497,17 @@ function initMatch(defs, secs, win) {
 }
 
 // ═══ 3D 반영 ═════════════════════════════════════════════
-const dummy = new THREE.Object3D();
+// 인스턴싱용 임시 객체. 회전을 쓰는 쪽과 안 쓰는 쪽을 반드시 나눠 둔다.
+// 하나를 같이 쓰면 회전을 건 쪽의 값이 남아 다음 쪽에 묻는다 (20 문서).
+const dummy = new THREE.Object3D();     // 격자에 고정되는 것 — 회전 없음
+const spin  = new THREE.Object3D();     // 도는 것 (스킬 아이템)
 
 // 격자를 그대로 훑는다. 참가자별 trail 배열을 쓰면 게스트에서는 만들 수 없다
 // (게스트는 셀 변경분만 받는다). 40,000칸 순회는 1ms 미만이고 궤적이 바뀔 때만 돈다.
 function syncTrailMesh() {
   const mesh = arena.trailMesh;
+  dummy.rotation.set(0, 0, 0);          // 궤적 블록은 격자에 고정 — 절대 돌지 않는다
+  dummy.scale.set(1, 1, 1);
   let n = 0;
   for (let i = 0; i < TOTAL && n < arena.cap; i++) {
     const t = trail[i];
@@ -1527,10 +1532,10 @@ function syncItems(now) {
     if (n >= arena.itemCap) break;
     const gz = (o.i / GRID) | 0, gx = o.i - gz * GRID;
     const c = SKILLS[o.k].rgb;
-    dummy.position.set(wxOf(gx), 1.25 + Math.sin(now / 340 + o.i) * 0.22, wzOf(gz));
-    dummy.rotation.set(0, now / 700 + o.i, 0.5);
-    dummy.updateMatrix();
-    mesh.setMatrixAt(n, dummy.matrix);
+    spin.position.set(wxOf(gx), 1.25 + Math.sin(now / 340 + o.i) * 0.22, wzOf(gz));
+    spin.rotation.set(0, now / 700 + o.i, 0.5);
+    spin.updateMatrix();
+    mesh.setMatrixAt(n, spin.matrix);
     mesh.instanceColor.setXYZ(n, c[0] / 255, c[1] / 255, c[2] / 255);
     n++;
   }
