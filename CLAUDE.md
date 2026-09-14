@@ -16,6 +16,11 @@
 - 브랜치: `main`
 - 인증: 서버 `gh` CLI (`gh auth status`로 확인). 푸시는 **너(클로드 코드)만** 담당.
 - 메인 작업 위치: `~/land-grab-game`
+- 파일 배치 (24 문서에서 바뀜)
+  - `land-grab/index.html` — 땅따먹기 본체 (예전 루트 `index.html`). 검사·시험은 전부 이 파일 기준.
+  - `hub/index.html` — `/game/` 게임 선택 허브
+  - 배포: `land-grab/index.html` → `~/.openclaw-mir/workspace/games/land-grab/index.html`,
+          `hub/index.html` → `~/.openclaw-mir/workspace/games/index.html`
 
 ---
 
