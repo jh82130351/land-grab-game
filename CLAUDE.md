@@ -19,8 +19,8 @@
 - 파일 배치 (24 문서에서 바뀜)
   - `land-grab/index.html` — 땅따먹기 본체 (예전 루트 `index.html`). 검사·시험은 전부 이 파일 기준.
   - `hub/index.html` — `/game/` 게임 선택 허브
-  - 배포: `land-grab/index.html` → `~/.openclaw-mir/workspace/games/land-grab/index.html`,
-          `hub/index.html` → `~/.openclaw-mir/workspace/games/index.html`
+  - 배포: `./deploy.sh` 한 번이면 된다 (허브·땅따먹기·FPS를 `~/.openclaw-mir/workspace/games/` 로)
+  - FPS Builder는 **별도 레포** `jh82130351/fps-prototype` 이고, `deploy.sh` 가 받아다 복사만 한다 (24-B 문서)
 
 ---
 
