@@ -196,7 +196,7 @@ cd $W/valuetopic && ./flask_server_off.sh && ./flask_server_on.sh
 - 허브 페이지는 스크립트가 짧고 모듈이 아니라 브라우저 로드로 확인 (카드 3개 정상 렌더)
 
 ## 새 커밋 해시
-- (아래 커밋 참조)
+- `7e223d0`
 
 ## 되돌리는 법
 ```bash
