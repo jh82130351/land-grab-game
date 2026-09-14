@@ -379,3 +379,26 @@ FPS의 누락 1개는 `overlayTitle` 인데, 쓰는 자리가
 
 ## 24-B 커밋 해시
 - `d264568`
+
+---
+
+## 24-C 덧붙임 — 배포 스크립트 안전장치
+
+FPS 지형 작업(2026-09-14) 때 **`fps-prototype` 레포에 푸시가 막혔다.**
+토큰이 세분 권한(fine-grained)이라 그 레포가 목록에 없다.
+
+```
+remote: Permission to jh82130351/fps-prototype.git denied to jh82130351.
+fatal: ... The requested URL returned error: 403
+```
+`gh api` 로 보면 `push: true` 로 나오지만, 이건 계정 권한이고 **토큰에 그 레포가
+안 들어 있으면 git push는 막힌다.** `land-grab-game` 은 목록에 있어서 잘 된다.
+
+그래서 `deploy.sh` 가 `git reset --hard origin/HEAD` 로 origin에 맞추는 부분이
+**푸시 못 한 커밋을 조용히 날리고 옛 버전을 배포하는 함정**이 됐다.
+로컬이 앞서 있으면 경고를 띄우고 **로컬 것을 배포하도록** 고쳤다.
+```
+⚠ fps 원본에 아직 안 올라간 커밋이 1개 있다 — origin 대신 로컬 것을 배포한다
+fps 원본 커밋: e1140da (미푸시)
+```
+푸시가 되면 이 경고는 저절로 사라진다.
