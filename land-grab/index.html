@@ -102,6 +102,9 @@
   #score .r.me .nm{color:var(--fg);font-weight:700}
   #score .dot{width:10px;height:10px;border-radius:3px;flex:none}
   #score .nm{flex:1;color:var(--dim)}
+  /* 봇 성향 — 성향마다 고유 색이라 순위표에서 바로 구분된다 (25 문서) */
+  #score .tag{font-size:10px;letter-spacing:.04em;padding:1px 5px;border-radius:4px;
+    border:1px solid currentColor;opacity:.92;flex:none}
   #score .pc{font-variant-numeric:tabular-nums;color:var(--fg)}
   #score .r.dead .nm,#score .r.dead .pc{opacity:.4}
 
@@ -638,6 +641,7 @@ function makeEnt(slot, name, bot, netId) {
     alive: true, respawn: 0, trail: [], cells: 0, deaths: 0,
     dir: 0, tgx: 0, tgz: 0, phase: 'idle', legIdx: 0, legs: [0, 0, 0], turns: [1, 1], legLeft: 0,
     ai: null, shapeName: '', think: 0, rethink: false, huntT: 0,   // 13단계 봇 성격·판단 주기
+    persona: null, lockId: 0, miss: null,                          // 25단계 성향·고정표적·실수
     running: false, threat: Infinity,                              // 15단계 봇 달리기
     seen: 0, waiting: false, warpT: 0,                             // 17단계 온라인 보고 상태
     slots: [0, 0, 0], fxBoost: 0, fxInv: 0, fxWide: 0,             // 19단계 스킬 슬롯·효과
@@ -1119,45 +1123,102 @@ function dangerFoes(b) {
   return out;
 }
 
-// ── 봇 성격 ─────────────────────────────────────────────
-// 셋이 똑같이 판단하면 도형만 바꿔도 결국 비슷해 보인다. 배역을 나눠 준다.
-//   size 기본 변 길이(셀) · aggr 사냥 의욕 · huntR 사냥 반경 · flee 이 거리 안에 적이 오면 복귀
-//   period 판단 주기(초) · whim 방향 선택의 변덕 · sprint 달리기 적극성 · maxTrail 궤적 상한
-const BOT_BRAINS = [
-  { tag: '확장형', size: 28, aggr: 0.05, huntR: 18, flee: 20, period: 1.8, whim: 0.30,
-    sprint: 0.35, maxTrail: 275, shapes: ['네모', '나선', 'L자', '갈고리'] },
-  { tag: '사냥꾼', size: 19, aggr: 0.60, huntR: 55, flee: 16, period: 1.1, whim: 0.50,
-    sprint: 0.85, maxTrail: 150, shapes: ['네모', '넓적', 'L자'] },
-  { tag: '침투형', size: 23, aggr: 0.15, huntR: 30, flee: 18, period: 1.3, whim: 0.60,
-    sprint: 0.60, maxTrail: 260, shapes: ['납작', '나선', '갈고리', '넓적'] },
-  { tag: '수비형', size: 18, aggr: 0.08, huntR: 20, flee: 24, period: 1.2, whim: 0.25,
-    sprint: 0.45, maxTrail: 175, shapes: ['네모', 'L자', '넓적', '나선'] },
+// ── 봇 실력 (전원 공통) ─────────────────────────────────
+// 25단계에서 난이도 차등을 없앴다. 성향은 "뭘 우선하나"만 바꾸고,
+// 판단 정확도는 전원 같은 값을 쓴다 — 판단 주기·달리기 판단·위협 인식·자멸 방지는
+// 성향과 무관하다. 봇마다 약한 봇·센 봇이 따로 없다.
+const BOT_SKILL = {
+  period: 0.8,     // 판단 주기(초). 짧을수록 상황 변화를 빨리 따라간다 (전 1.1~1.8)
+  whim:   0.22,    // 방향 선택의 변덕. 낮을수록 점수대로 고른다 (전 0.25~0.60)
+  sprint: 0.85,    // 달리기 적극성. urgency()가 국면별로 다르게 나오므로
+                   //   실제로 달린 비율은 성향에 따라 자연히 갈린다
+};
+
+// ── 봇 성향 ─────────────────────────────────────────────
+// 매 판 봇마다 하나씩 배정한다 (섞어 뽑아 서로 겹치지 않는다). 순위표에 고유 색으로 붙는다.
+//   aggr 공격성 · huntR 사냥 거리 · item 아이템 우선도(탐색 반경·가산점 배수)
+//   size 확장 크기 · flee 복귀 민감도(이 거리 안에 적이 오면 돌아간다) · maxTrail 돌아가는 기준
+//   lock 한 상대 고정 추격 · press 정면 압박(수비 약함) · harass 상대 궤적 근처 위협
+const PERSONAS = [
+  { tag: '수집가', css: '#35c9c0', size: 22, aggr: 0.18, huntR: 26, item: 1.8, flee: 20,
+    maxTrail: 220, shapes: ['네모', '나선', 'L자', '넓적'] },
+  { tag: '저격수', css: '#ff5a4e', size: 16, aggr: 0.85, huntR: 70, item: 0.6, flee: 18,
+    maxTrail: 150, lock: 1, shapes: ['네모', '넓적', 'L자'] },
+  { tag: '만능',   css: '#e8edf5', size: 22, aggr: 0.40, huntR: 40, item: 1.0, flee: 20,
+    maxTrail: 240, shapes: ['네모', '나선', 'L자', '넓적', '갈고리'] },
+  { tag: '돌격',   css: '#ff9b3d', size: 26, aggr: 0.70, huntR: 50, item: 0.8, flee: 10,
+    maxTrail: 300, press: 1, shapes: ['넓적', 'L자', '갈고리'] },
+  { tag: '확장',   css: '#8fd14f', size: 32, aggr: 0.10, huntR: 22, item: 1.0, flee: 22,
+    maxTrail: 320, shapes: ['네모', '나선', '갈고리', '넓적'] },
+  { tag: '교란',   css: '#b48cff', size: 18, aggr: 0.50, huntR: 45, item: 0.9, flee: 24,
+    maxTrail: 200, harass: 1, shapes: ['납작', '나선', 'L자'] },
 ];
 
+// ── 실수 ────────────────────────────────────────────────
+// 경로를 다시 정하는 시점마다 1% 확률로 하나 걸린다. 그 판단 한 번만 비틀고 바로 풀린다.
+// 즉사하는 실수는 없다 — "위험해지는" 수준이다.
+// 자멸 방지(자기 궤적 회피 + routeHome 검사)는 실수와 별개로 늘 돌아간다.
+const MISTAKE_P = 0.01;
+const MISTAKES = [
+  'flee2',      // 도망 거리 2칸 부족 — 복귀 문턱을 2칸 깎는다
+  'homeLate',   // 복귀가 한 박자 늦는다 — 이번 판단에서 복귀 전환을 건너뛴다
+  'skillMiss',  // 아이템(스킬) 쓸 타이밍을 놓친다
+  'misread',    // 상대 궤적을 오판해 접근한다 — 회피 감점을 이번만 무시
+  'turnLate',   // 회전을 한 칸 늦게 꺾는다
+  'duelEarly',  // 정면 승부에서 한 칸 먼저 꺾는다
+  'duelLate',   // 물러날 타이밍이 한 칸 늦는다
+  'duelPush',   // 상대 궤적 길이를 오판해 승부를 걸어 버린다
+];
+let mistakeLog = {};        // 검증용 집계 — 종류별 발생 횟수
+
+function rollMistake(b) {
+  b.miss = Math.random() < MISTAKE_P
+    ? MISTAKES[(Math.random() * MISTAKES.length) | 0] : null;
+  if (b.miss) mistakeLog[b.miss] = (mistakeLog[b.miss] || 0) + 1;
+}
+
+// 저격수가 물고 늘어질 상대 하나를 고른다 — 1위이거나 가까운 쪽
+function pickLock(b) {
+  let best = 0, bestS = -Infinity;
+  for (const e of ents) {
+    if (e === b || !e.alive) continue;
+    const d = Math.abs(gxOf(e.x) - b.gx) + Math.abs(gzOf(e.z) - b.gz);
+    const s = e.cells * 0.5 - d;
+    if (s > bestS) { bestS = s; best = e.id; }
+  }
+  return best;
+}
+
 function assignBrains() {
-  const pool = BOT_BRAINS.slice();
-  for (let i = pool.length - 1; i > 0; i--) {          // 섞는다 — 매 판 배역이 달라진다
+  const pool = PERSONAS.slice();
+  for (let i = pool.length - 1; i > 0; i--) {          // 섞는다 — 매 판 성향이 달라진다
     const k = (Math.random() * (i + 1)) | 0;
     const t = pool[i]; pool[i] = pool[k]; pool[k] = t;
   }
-  const jit = (v, p) => v * (1 - p + Math.random() * p * 2);   // 같은 배역도 개체차를 준다
+  const jit = (v, p) => v * (1 - p + Math.random() * p * 2);   // 같은 성향도 개체차를 준다
   let n = 0;
+  mistakeLog = {};
   for (const e of ents) {
     if (!e.bot) continue;
     const base = pool[n++ % pool.length];
     e.ai = {
-      tag: base.tag,
-      size:     Math.max(5, Math.round(jit(base.size, 0.25))),
-      aggr:     Math.min(0.95, jit(base.aggr, 0.30)),
-      huntR:    Math.round(jit(base.huntR, 0.25)),
-      flee:     Math.round(jit(base.flee, 0.30)),
-      period:   Math.max(0.25, jit(base.period, 0.35)),
-      whim:     base.whim,
-      sprint:   Math.min(0.95, jit(base.sprint, 0.25)),   // 달리기 적극성
-      maxTrail: Math.round(jit(base.maxTrail, 0.20)),   // 죽는 상한이 아니라 '이쯤이면 돌아간다' 기준
-      shapes:   base.shapes,
+      tag: base.tag, css: base.css, pi: PERSONAS.indexOf(base) + 1,
+      // ↓ 우선순위 — 성향마다 다르다
+      size:     Math.max(5, Math.round(jit(base.size, 0.20))),
+      aggr:     Math.min(0.95, jit(base.aggr, 0.20)),
+      huntR:    Math.round(jit(base.huntR, 0.20)),
+      flee:     Math.round(jit(base.flee, 0.20)),
+      item:     base.item,
+      maxTrail: Math.round(jit(base.maxTrail, 0.15)),
+      lock: !!base.lock, press: !!base.press, harass: !!base.harass,
+      // ↓ 실력 — 전원 같은 값. 흔들지 않는다
+      period: BOT_SKILL.period, whim: BOT_SKILL.whim, sprint: BOT_SKILL.sprint,
+      shapes: base.shapes,
     };
-    e.think = Math.random() * e.ai.period;             // 판단 시점도 서로 어긋나게
+    e.persona = base;
+    e.lockId = 0;
+    e.miss = null;
+    e.think = Math.random() * e.ai.period;             // 판단 시점은 서로 어긋나게
   }
 }
 
@@ -1198,6 +1259,9 @@ const DODGE = 6;        // 출격 사거리 안 한 칸당 최대 감점. 너무
 function pickDir(b, size) {
   const span = Math.min(60, 12 + Math.round(size * 1.8));
   const foes = dangerFoes(b);
+  const ai = b.ai || { item: 1, whim: BOT_SKILL.whim };
+  // 돌격은 정면으로 밀어붙이는 쪽이라 회피 감점을 크게 깎는다 — 그만큼 수비가 약하다.
+  const dodge = ai.press ? DODGE * 0.35 : DODGE;
   let bestD = 0, bestS = -Infinity;
   for (let d = 0; d < 4; d++) {
     let s = 0;
@@ -1211,21 +1275,45 @@ function pickDir(b, size) {
       if (trail[i] === b.id) s -= 4;            // 내 궤적 쪽으로는 나가지 않는다
       else if (owner[i] === 0) s += 1.4;        // 무소유 빈 땅이 제일 좋다
       else if (owner[i] !== b.id) s += 0.9;     // 남의 땅 — 뺏으면 이득이 크다
-      if (itemAt(i)) s += 6;                    // 가는 길에 아이템이 있으면 그쪽으로
+      if (itemAt(i)) s += 6 * (ai.item || 1);   // 가는 길에 아이템 — 수집가는 가중이 크다
+      if (ai.press || ai.harass) {              // 남의 궤적 쪽으로 — 압박(돌격) · 위협(교란)
+        const t = trail[i];
+        if (t && t !== b.id) s += ai.press ? 5 : 3.5;
+      }
       // 상대의 출격 사거리 안이면 감점. 가까울수록 크게 깎는다.
       // 남의 땅이 탐나서 그 주인 코앞에 꼬리를 늘어놓던 게 16단계에서 고친 지점이다.
       for (let k = 0; k < foes.length; k++) {
         const fd = Math.abs(nx - foes[k][0]) + Math.abs(nz - foes[k][1]);
-        if (fd < foes[k][2]) s -= (1 - fd / foes[k][2]) * DODGE;
+        if (fd < foes[k][2]) s -= (1 - fd / foes[k][2]) * dodge;
       }
     }
-    s += Math.random() * span * b.ai.whim;
+    s += Math.random() * span * ai.whim;
     if (s > bestS) { bestS = s; bestD = d; }
   }
   return bestD;
 }
 
 const itemAt = (i) => items.some((o) => o.i === i);
+
+// 반경 안의 '남의 궤적' 중 가장 가까운 칸 쪽 방향. 없으면 -1.
+// 실수 'misread'(상대 궤적을 오판해 접근)가 쓴다.
+function foeTrailDir(b, radius) {
+  let bd = radius + 1, bgx = 0, bgz = 0;
+  for (const e of ents) {
+    if (e === b || !e.alive) continue;
+    const st = 1 + ((e.trail.length / 200) | 0);
+    for (let k = 0; k < e.trail.length; k += st) {
+      const i = e.trail[k];
+      const gz = (i / GRID) | 0, gx = i - gz * GRID;
+      const d = Math.abs(gx - b.gx) + Math.abs(gz - b.gz);
+      if (d < bd) { bd = d; bgx = gx; bgz = gz; }
+    }
+  }
+  if (bd > radius) return -1;
+  const ddx = bgx - b.gx, ddz = bgz - b.gz;
+  if (Math.abs(ddx) >= Math.abs(ddz)) return ddx === 0 ? -1 : (ddx > 0 ? 0 : 2);
+  return ddz === 0 ? -1 : (ddz > 0 ? 1 : 3);
+}
 
 // 빈 슬롯이 있으면 가까운 아이템을 주우러 간다. 너무 멀면 하던 확장을 계속한다.
 function findItem(b, radius) {
@@ -1249,10 +1337,16 @@ function botUseSkill(b, ai) {
     if (key === 'recall' && risky && b.trail.length > 60) { useSlot(b, k); return; }
     if (key === 'invuln' && risky) { useSlot(b, k); return; }
     if (key === 'boost' && (b.phase === 'hunt' || (b.phase === 'home' && risky))) { useSlot(b, k); return; }
-    if (key === 'wide' && b.fxWide <= 0 && b.phase === 'out' && b.trail.length > 20) { useSlot(b, k); return; }
+    // 점령 확대는 '큰 폐곡선을 닫을 때' 켠다. 돌아가는 중이거나 이미 충분히
+    // 크게 둘렀을 때라야 두 겹이 통째로 붙는다 (25 문서).
+    if (key === 'wide' && b.fxWide <= 0
+        && (b.phase === 'home' ? b.trail.length > 40 : b.trail.length > ai.maxTrail * 0.55)) {
+      useSlot(b, k); return;
+    }
   }
-  // 슬롯이 꽉 찼는데 쓸 때가 아니면, 자리를 비우려고 제일 덜 급한 걸 쓴다
-  if (b.slots.indexOf(0) < 0) {
+  // 슬롯이 꽉 찼는데 쓸 때가 아니면, 자리를 비우려고 제일 덜 급한 걸 쓴다.
+  // 집에 가만히 선 채로 태우면 그냥 버리는 셈이라 궤적이 좀 나간 뒤에만 한다.
+  if (b.slots.indexOf(0) < 0 && b.trail.length > 8) {
     const k = b.slots.findIndex((id) => SKILLS[id].key === 'wide' || SKILLS[id].key === 'boost');
     if (k >= 0) useSlot(b, k);
   }
@@ -1291,13 +1385,18 @@ function planBot(b) {
 const HUNT_AWAY = 100;           // 자기 집에서 이만큼(150m) 나와 있거나
 const HUNT_LONG = 160;           // 궤적을 이만큼(240m) 늘어놓았거나
 
-function findPrey(b, radius) {
+function findPrey(b, radius, lockId) {
   let best = null, bestS = 0;
   for (const e of ents) {
     if (e === b || !e.alive) continue;
+    if (lockId && e.id !== lockId) continue;        // 저격수 — 고른 상대 하나만 본다
 
     const away = Math.abs(gxOf(e.x) - e.homeGx) + Math.abs(gzOf(e.z) - e.homeGz);
-    if (away < HUNT_AWAY && e.trail.length < HUNT_LONG) continue;   // 아직 안전권이다
+    // 고정 표적은 문턱을 낮춰 본다. 판단이 더 정확해서가 아니라
+    // "이 사람만 노린다"는 우선순위라서다 — 실력이 아니라 성향이다.
+    const kAway = lockId ? HUNT_AWAY * 0.45 : HUNT_AWAY;
+    const kLong = lockId ? HUNT_LONG * 0.45 : HUNT_LONG;
+    if (away < kAway && e.trail.length < kLong) continue;           // 아직 안전권이다
 
     let ci = -1, cd = radius + 1, cgx = 0, cgz = 0;
     const st = 1 + ((e.trail.length / 400) | 0);     // 궤적이 아주 길면 띄엄띄엄 본다
@@ -1312,7 +1411,7 @@ function findPrey(b, radius) {
     const s = Math.min(200, e.trail.length)          // 길게 늘어놓을수록
             + Math.min(120, away) * 1.5              // 집에서 멀리 나와 있을수록
             - cd * 2;                                // 내가 멀수록 깎는다
-    if (s > bestS) { bestS = s; best = { gx: cgx, gz: cgz, i: ci, name: e.name }; }
+    if (s > bestS) { bestS = s; best = { gx: cgx, gz: cgz, i: ci, name: e.name, id: e.id }; }
   }
   return best;
 }
@@ -1332,7 +1431,14 @@ function retargetHome(b) {
 // 다음에 들어갈 칸을 고른다. 자기 궤적 칸은 절대 고르지 않고,
 // 그 칸에서 집으로 돌아올 길이 남아 있는지까지 확인한다.
 function botPick(b) {
-  const ai = b.ai || { maxTrail: MAX_TRAIL, aggr: 0.3, huntR: 15, flee: 10, sprint: 0.5 };
+  const ai = b.ai || { maxTrail: MAX_TRAIL, aggr: 0.3, huntR: 15, flee: 10, sprint: 0.5, item: 1 };
+
+  // 실수는 '한 번' 쓰고 사라진다. 판단 주기마다 1%로 새로 뽑으므로 겹치지 않는다.
+  const use = (k) => { if (b.miss === k) { b.miss = null; return true; } return false; };
+  const fleeTh = ai.flee - (use('flee2') ? 2 : 0);       // 도망 거리 2칸 부족
+  const foeNear = nearestFoe(b) < 10;                    // 정면 승부 상황인가
+  // 복귀 전환을 이번 판단에서만 건너뛴다 — 한 박자 늦는다
+  const holdHome = use('homeLate') || (foeNear && use('duelLate'));
 
   // ── 국면 전환 ──
   if (b.phase === 'out') {
@@ -1341,9 +1447,10 @@ function botPick(b) {
       if (b.legIdx < b.legs.length) {
         b.dir = (b.dir + (b.turns[b.legIdx - 1] > 0 ? 1 : 3)) % 4;
         b.legLeft = b.legs[b.legIdx];
-      } else b.phase = 'home';
+      } else if (!holdHome) b.phase = 'home';
     }
-    if (b.trail.length > ai.maxTrail) b.phase = 'home';
+    if (foeNear && use('duelEarly')) b.legLeft = 0;      // 한 칸 먼저 꺾는다
+    if (b.trail.length > ai.maxTrail && !holdHome) b.phase = 'home';
   } else if (b.phase === 'grab') {
     b.huntT++;
     if (!itemAt(b.preyI) || b.slots.indexOf(0) < 0) b.phase = 'out';   // 없어졌거나 슬롯이 찼다
@@ -1353,27 +1460,34 @@ function botPick(b) {
     const ti = b.preyI;
     if (ti === undefined || !trail[ti] || trail[ti] === b.id) b.phase = 'out';   // 사라졌다
     else if (b.huntT > ai.huntR * 2 + 20) b.phase = 'home';                      // 너무 오래 쫓았다
-    else if (b.trail.length > ai.maxTrail) b.phase = 'home';
+    else if (b.trail.length > ai.maxTrail && !holdHome) b.phase = 'home';
   }
 
-  // ── 판단 주기마다 한 번씩만 다시 생각한다 (주기는 봇마다 다르다) ──
+  // ── 판단 주기마다 한 번씩만 다시 생각한다 (주기는 전원 같다 — 25 문서) ──
   if (b.rethink) {
     b.rethink = false;
-    botUseSkill(b, ai);
-    if (b.phase === 'out') {
-      const it = findItem(b, 26);                     // 가까운 아이템은 주우러 들른다
+    if (!use('skillMiss')) botUseSkill(b, ai);        // 쓸 타이밍을 놓치는 실수
+    // 아이템 — 수집가는 멀리까지 보고, 사냥 중에도 들른다 (아이템 최우선)
+    const itemR = Math.round(26 * (ai.item || 1));
+    if (b.phase === 'out' || (ai.item > 1.4 && b.phase === 'hunt')) {
+      const it = findItem(b, itemR);
       if (it) { b.phase = 'grab'; b.huntT = 0; b.preyGx = it.gx; b.preyGz = it.gz; b.preyI = it.i; }
     }
     if (b.phase !== 'home') {
       const foe = b.threat;
-      if (b.trail.length > 12 && foe < ai.flee) {
+      const push = foeNear && use('duelPush');        // 궤적 길이를 오판해 승부를 건다
+      if (b.trail.length > 12 && foe < fleeTh && !holdHome && !push) {
         b.phase = 'home';                        // 위험 — 치고 빠진다 (수비)
       } else if ((b.phase === 'out' || b.phase === 'hunt')
                  && b.trail.length < ai.maxTrail * 0.8
-                 && (b.phase === 'hunt' || Math.random() < ai.aggr)) {
+                 && (b.phase === 'hunt' || push || Math.random() < ai.aggr)) {
+        if (ai.lock) {                                // 저격수 — 표적이 죽었으면 새로 고른다
+          const tgt = entBySlot(b.lockId);
+          if (!tgt || !tgt.alive) b.lockId = pickLock(b);
+        }
         // 사냥 중에도 주기마다 다시 조준한다. 상대가 궤적을 늘리며 다가오면
         // 더 가까운 칸이 생기는데, 처음 찍은 칸만 보고 있으면 그걸 놓친다.
-        const prey = findPrey(b, ai.huntR);
+        const prey = findPrey(b, ai.huntR, ai.lock ? b.lockId : 0);
         if (prey) {
           if (b.phase !== 'hunt') b.huntT = 0;
           b.phase = 'hunt';
@@ -1412,6 +1526,12 @@ function botPick(b) {
     if (rd >= 0 && rd < 4) order.push(rd);
   }
   if (b.phase === 'out') order.push(b.dir, (b.dir + 1) % 4, (b.dir + 3) % 4);
+  // 실수 — 남의 궤적을 안전하다고 오판해 그쪽으로 한 걸음 들어간다.
+  // 방향 '순서'만 바꾼다. 아래 후보 검사(자기 궤적 회피 + routeHome)는 그대로 통과해야 한다.
+  if (use('misread')) {
+    const fd = foeTrailDir(b, 12);
+    if (fd >= 0) order.unshift(fd);
+  }
 
   // ── 후보를 훑는다 ──
   const back = (b.dir + 2) % 4;
@@ -1486,6 +1606,7 @@ function stepBot(b, dt) {
     b.think = b.ai.period;
     b.rethink = true;
     b.threat = threatToTrail(b);        // 주기마다 한 번만 잰다. 매 프레임 훑으면 비싸다
+    rollMistake(b);                     // 이 판단에 실수가 끼는지 — 1% (25 문서)
   }
   if (b.phase === 'idle') { planBot(b); botPick(b); }
 
@@ -2008,10 +2129,13 @@ let tickAt = 0;
 function entBySlot(id) { return ents.find((e) => e.id === id); }
 
 function entPayload() {
+  // 마지막 칸은 봇 성향 번호(1~6, 사람은 0)다. 매 틱 실어 보내면 한 숫자로 자가 복구된다 —
+  // 따로 한 번만 보내면 그 메시지를 놓친 게스트가 끝까지 엉뚱한 성향을 그린다.
   return ents.map((e) => [e.id, Math.round(e.x * 20) / 20, Math.round(e.z * 20) / 20,
                           e.alive ? 1 : 0, e.cells, e.deaths,
                           e.slots[0] | (e.slots[1] << 3) | (e.slots[2] << 6),
-                          Math.round(e.fxBoost * 10), Math.round(e.fxInv * 10), Math.round(e.fxWide * 10)]);
+                          Math.round(e.fxBoost * 10), Math.round(e.fxInv * 10), Math.round(e.fxWide * 10),
+                          e.bot && e.ai ? e.ai.pi : 0]);
 }
 
 // 아이템 목록은 통째로 보낸다. 최대 8개(숫자 16개)라 매 틱 보내도 부담이 없고,
@@ -2026,6 +2150,13 @@ function netStartMatch(room, members) {
   online = true;
   iamHost = room.host === myId;
   const defs = members.map((m) => ({ name: m.name, netId: m.id }));
+  // 정원이 덜 찼으면 남은 자리를 봇으로 채운다 (25 문서).
+  // 개수를 room.max 와 members 로만 정하므로 방장·게스트가 똑같은 명단을 만든다.
+  // 봇을 움직이는 건 방장뿐이다 — stepMatch 가 게스트에서 먼저 빠져나간다.
+  const slots = Math.min(4, room.max || members.length);
+  for (let k = defs.length; k < slots; k++) {
+    defs.push({ name: '봇 ' + String.fromCharCode(65 + k - members.length), bot: true });
+  }
   initMatch(defs, room.secs, room.win ? room.win / 100 : 0);
   collectDirty = iamHost;
   dirtySet.clear();
@@ -2103,7 +2234,14 @@ function applyState(d) {
   for (const a of d.e) {
     const e = entBySlot(a[0]);
     if (!e) continue;
-    const [, x, z, alive, cells, deaths, sl, fb, fi, fw] = a;
+    const [, x, z, alive, cells, deaths, sl, fb, fi, fw, pi] = a;
+    if (pi) {                                  // 봇 성향 — 받은 쪽은 그리기용으로만 쓴다
+      const base = PERSONAS[pi - 1];
+      if (base && e.persona !== base) {
+        e.persona = base;
+        if (e.ai) { e.ai.tag = base.tag; e.ai.css = base.css; e.ai.pi = pi; }
+      }
+    }
     const was = e.alive;
     e.cells = cells;
     e.alive = !!alive;
@@ -2585,9 +2723,10 @@ function renderRooms(list) {
 function updateRoomPanel(room, members) {
   document.getElementById('room-name').textContent = room.name;
   settingEl.textContent = settingText(room);
-  document.getElementById('room-note').textContent = room.players >= room.max
+  const fill = Math.max(0, Math.min(4, room.max) - room.players);
+  document.getElementById('room-note').textContent = fill === 0
     ? '정원이 찼습니다 (' + room.players + ' / ' + room.max + ')'
-    : '참가자를 기다리는 중… (' + room.players + ' / ' + room.max + ')';
+    : '참가자 ' + room.players + ' / ' + room.max + ' · 지금 시작하면 빈자리 ' + fill + '칸은 봇이 채웁니다';
   startBtn.style.display = iamHost ? '' : 'none';
   if (!members) return;
   const box = document.getElementById('room-members');
@@ -2706,7 +2845,9 @@ document.getElementById('btn-room-leave').addEventListener('click', leaveRoom);
 document.getElementById('btn-create-ok').addEventListener('click', submitCreate);
 startBtn.addEventListener('click', () => {
   if (!myRoom) return;
-  if (myRoom.players < myRoom.max) { toast('아직 정원이 차지 않았습니다 (' + myRoom.players + '/' + myRoom.max + ')'); return; }
+  // 정원 미달이어도 시작한다. 빈자리는 봇이 채운다 (25 문서).
+  const fill = Math.max(0, Math.min(4, myRoom.max) - myRoom.players);
+  if (fill > 0) toast('빈자리 ' + fill + '칸을 봇이 채웁니다');
   send({ t: 'start_game' });
 });
 document.getElementById('btn-create-cancel').addEventListener('click', () => enter3d('lobby'));
@@ -2807,9 +2948,11 @@ function buildScoreRows() {
     dot.style.background = CSS_COLOR[e.id - 1];
     const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = e.name;
     const pc = document.createElement('span'); pc.className = 'pc';
-    row.append(dot, nm, pc);
+    // 봇이면 성향을 고유 색 태그로 붙인다. 땅 색(슬롯 색)과는 따로다.
+    const tag = document.createElement('span'); tag.className = 'tag';
+    row.append(dot, nm, tag, pc);
     scoreEl.appendChild(row);
-    return { ent: e, row, pc };
+    return { ent: e, row, pc, tag };
   });
 }
 
@@ -2825,6 +2968,11 @@ function drawHud(now, s) {
       r.pc.textContent = (share(r.ent) * 100).toFixed(1) + '%';
       r.row.classList.toggle('dead', !r.ent.alive);
       r.row.style.order = rank.indexOf(r.ent);
+      // 봇 성향 — 글자는 성향 이름, 색은 성향마다 고유 (사람은 빈 칸)
+      const pr = r.ent.bot ? r.ent.persona : null;
+      const tg = pr ? pr.tag : '';
+      if (r.tag.textContent !== tg) r.tag.textContent = tg;
+      r.tag.style.color = pr ? pr.css : 'transparent';
     });
     const t = Math.max(0, matchTime);
     const m = (t / 60) | 0, sec = (t % 60) | 0;

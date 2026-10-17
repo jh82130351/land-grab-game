@@ -278,8 +278,9 @@ async def handle(client, msg):
         if room.host != client.id:
             await client.send({'t': 'error', 'msg': '방장만 시작할 수 있습니다.'})
             return
-        if not room.full:
-            await client.send({'t': 'error', 'msg': '정원이 차야 시작할 수 있습니다.'})
+        # 25 문서 — 정원이 덜 차도 시작할 수 있다. 빈자리는 클라가 봇으로 채운다.
+        # 방장만 시작할 수 있다는 규칙은 위에 그대로 있다.
+        if not room.members:
             return
         room.playing = True
         log.info('경기 시작 %s "%s" (%d명)', room.id, room.name, len(room.members))

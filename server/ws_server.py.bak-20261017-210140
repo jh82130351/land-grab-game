@@ -1,0 +1,379 @@
+#!/usr/bin/env python3
+"""땅따먹기 온라인 — 방 관리 + 중계 WebSocket 서버 (포트 5002).
+
+역할은 둘뿐이다.
+  1) 방 관리 — 생성 / 목록 / 입장 / 퇴장 / 방장 위임 / 빈 방 정리 (정원 2)
+  2) 중계    — 같은 방의 상대에게 메시지를 그대로 전달
+
+프로토콜 (모두 JSON, 최상위 키 t)
+  클라 → 서버
+    {t:'hello', name}                 접속 인사. 닉네임 등록
+    {t:'list_rooms'}                  방 목록 요청
+    {t:'create_room', name, max, secs, win}
+                                      방 생성 (생성자가 방장)
+                                      max  2|3|4        정원
+                                      secs 60|120|180|300 제한시간
+                                      win  60|null      승리 점령률(%)
+    {t:'join', room}                  방 입장
+    {t:'leave'}                       방 퇴장
+    {t:'relay', data}                 같은 방 상대 전원에게 그대로 전달 (게임 상태)
+    {t:'start_game'}                  방장만. 방을 진행 상태로 바꾸고 전원에게 알린다
+    {t:'end_game'}                    방장만. 대기 상태로 되돌린다
+    {t:'ping', ts}                    왕복 지연 측정
+  서버 → 클라
+    {t:'welcome', id, name}           내 접속 id
+    {t:'room_list', rooms:[...]}      방 목록 (로비에 있는 사람에게만)
+    {t:'joined', room, you}           입장 성공. you = 'host' | 'guest'
+    {t:'room_update', room, members}  방 인원·설정 변화 (같은 방 전원에게)
+    {t:'host_changed', host, name}    방장 위임 알림 (같은 방 전원에게)
+    {t:'game_start', room, members}   경기 시작 (같은 방 전원에게)
+    {t:'game_end', room}              경기 종료/해제
+    {t:'peer', event, id, name}       상대 입장/퇴장 알림. event = 'join' | 'leave'
+    {t:'left'}                        내 퇴장 확인
+    {t:'error', msg}                  거절 사유
+    {t:'pong', ts}
+
+게임 계산은 하지 않는다. 방장 클라이언트가 계산하고(host-authoritative)
+서버는 그 결과를 상대에게 넘기기만 한다. (마일스톤 C에서 사용)
+
+배포: 이 파일은 land-grab-game 레포의 server/ 에 있고, 서버에서도 같은 경로로 실행한다.
+      ~/land-grab-game/server/ws_server_on.sh 로 기동한다.
+경로: Cloudflare Tunnel이 https://valuetopic.com/game/ws → localhost:5002 로 넘긴다.
+"""
+
+import asyncio
+import json
+import logging
+import os
+import secrets
+import signal
+import time
+
+from websockets.asyncio.server import serve
+from websockets.exceptions import ConnectionClosed
+
+HOST = '127.0.0.1'
+PORT = 5002
+WS_PATH = '/game/ws'
+ROOM_CAPS = (2, 3, 4)                  # 허용 정원
+ROOM_SECS = (60, 120, 180, 300)        # 허용 제한시간(초)
+ROOM_WINS = (60, None)                 # 허용 승리 점령률(%)
+NAME_MAX = 20            # 방 이름 길이 제한
+ROOM_LIMIT = 40          # 동시 방 개수 상한 (무한 생성 방지)
+IDLE_ROOM_SEC = 3600     # 아무도 없는 방은 이 시간 뒤 정리
+
+LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+os.makedirs(LOG_DIR, exist_ok=True)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s %(message)s',
+    handlers=[logging.FileHandler(os.path.join(LOG_DIR, 'ws_server.log')), logging.StreamHandler()],
+)
+log = logging.getLogger('ws')
+
+clients = {}   # client_id -> Client
+rooms = {}     # room_id   -> Room
+
+
+class Client:
+    def __init__(self, ws, cid):
+        self.ws = ws
+        self.id = cid
+        self.name = '플레이어'
+        self.room = None       # room_id
+        self.in_lobby = True   # 방 목록을 받아볼 상태인가
+
+    async def send(self, obj):
+        try:
+            await self.ws.send(json.dumps(obj, ensure_ascii=False))
+        except (ConnectionClosed, RuntimeError):
+            pass
+
+
+class Room:
+    def __init__(self, rid, name, host_id, cap, secs, win):
+        self.id = rid
+        self.name = name
+        self.host = host_id       # 방장 = 게임 계산 주체
+        self.members = [host_id]
+        self.playing = False      # 경기 진행 중인가
+        self.cap = cap            # 정원 2~4
+        self.secs = secs          # 제한시간(초)
+        self.win = win            # 승리 점령률(%) 또는 None
+        self.created = time.time()
+
+    @property
+    def full(self):
+        return len(self.members) >= self.cap
+
+    @property
+    def state(self):
+        if self.playing:
+            return 'playing'
+        return 'play' if self.full else 'wait'
+
+    def info(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'players': len(self.members),
+            'max': self.cap,
+            'secs': self.secs,
+            'win': self.win,
+            'state': self.state,
+            'host': self.host,
+        }
+
+    def members_info(self):
+        out = []
+        for cid in self.members:
+            c = clients.get(cid)
+            if c:
+                out.append({'id': c.id, 'name': c.name, 'host': cid == self.host})
+        return out
+
+
+def room_list():
+    return [r.info() for r in rooms.values()]
+
+
+async def push_room_list():
+    """로비에 있는 사람들에게만 목록을 보낸다."""
+    msg = {'t': 'room_list', 'rooms': room_list()}
+    await asyncio.gather(*[c.send(msg) for c in list(clients.values()) if c.in_lobby],
+                         return_exceptions=True)
+
+
+async def push_room_state(room):
+    msg = {'t': 'room_update', 'room': room.info(), 'members': room.members_info()}
+    await asyncio.gather(*[clients[cid].send(msg) for cid in room.members if cid in clients],
+                         return_exceptions=True)
+
+
+def pick(raw, allowed, fallback):
+    """허용 목록에 있는 값만 받는다. 클라이언트 값을 그대로 믿지 않는다."""
+    if raw in allowed:
+        return raw
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return fallback
+    return n if n in allowed else fallback
+
+
+def clean_name(raw, fallback):
+    if not isinstance(raw, str):
+        return fallback
+    s = raw.strip().replace('\n', ' ')[:NAME_MAX]
+    return s or fallback
+
+
+async def leave_room(client, notify=True):
+    rid = client.room
+    if not rid:
+        return
+    client.room = None
+    client.in_lobby = True
+    room = rooms.get(rid)
+    if not room:
+        return
+
+    if client.id in room.members:
+        room.members.remove(client.id)
+
+    if not room.members:
+        rooms.pop(rid, None)
+        log.info('방 삭제 %s (%s)', rid, room.name)
+    else:
+        if room.playing and not room.full:
+            room.playing = False   # 한 명이라도 빠지면 경기 유지 불가
+        # 방장이 나가면 남은 사람이 방장이 된다 (방은 해체하지 않는다)
+        handed = False
+        if room.host == client.id:
+            room.host = room.members[0]
+            handed = True
+        if notify:
+            if handed:
+                new_host = clients.get(room.host)
+                await asyncio.gather(
+                    *[clients[cid].send({'t': 'host_changed', 'host': room.host,
+                                         'name': new_host.name if new_host else '?'})
+                      for cid in room.members if cid in clients],
+                    return_exceptions=True)
+            await asyncio.gather(
+                *[clients[cid].send({'t': 'peer', 'event': 'leave', 'id': client.id, 'name': client.name})
+                  for cid in room.members if cid in clients],
+                return_exceptions=True)
+            await push_room_state(room)
+    await push_room_list()
+
+
+async def handle(client, msg):
+    t = msg.get('t')
+
+    if t == 'hello':
+        client.name = clean_name(msg.get('name'), '플레이어')
+        await client.send({'t': 'welcome', 'id': client.id, 'name': client.name})
+        await client.send({'t': 'room_list', 'rooms': room_list()})
+
+    elif t == 'list_rooms':
+        await client.send({'t': 'room_list', 'rooms': room_list()})
+
+    elif t == 'create_room':
+        if client.room:
+            await leave_room(client)
+        if len(rooms) >= ROOM_LIMIT:
+            await client.send({'t': 'error', 'msg': '방이 너무 많습니다. 잠시 후 다시 시도하세요.'})
+            return
+        rid = secrets.token_hex(3)
+        name = clean_name(msg.get('name'), client.name + '의 방')
+        cap = pick(msg.get('max'), ROOM_CAPS, 2)
+        secs = pick(msg.get('secs'), ROOM_SECS, 180)
+        win = msg.get('win')
+        win = 60 if win == 60 or win == '60' else None
+        room = Room(rid, name, client.id, cap, secs, win)
+        rooms[rid] = room
+        client.room = rid
+        client.in_lobby = False
+        log.info('방 생성 %s "%s" by %s (정원 %d · %d초 · 승리 %s)',
+                 rid, name, client.name, cap, secs, str(win) + '%' if win else '없음')
+        await client.send({'t': 'joined', 'room': room.info(), 'you': 'host'})
+        await push_room_state(room)
+        await push_room_list()
+
+    elif t == 'join':
+        rid = msg.get('room')
+        room = rooms.get(rid)
+        if not room:
+            await client.send({'t': 'error', 'msg': '없는 방입니다.'})
+            await client.send({'t': 'room_list', 'rooms': room_list()})
+            return
+        if room.full:
+            await client.send({'t': 'error', 'msg': '방이 가득 찼습니다.'})
+            return
+        if client.room:
+            await leave_room(client)
+        room.members.append(client.id)
+        client.room = rid
+        client.in_lobby = False
+        log.info('방 입장 %s "%s" ← %s', rid, room.name, client.name)
+        await client.send({'t': 'joined', 'room': room.info(),
+                           'you': 'host' if room.host == client.id else 'guest'})
+        await asyncio.gather(
+            *[clients[cid].send({'t': 'peer', 'event': 'join', 'id': client.id, 'name': client.name})
+              for cid in room.members if cid != client.id and cid in clients],
+            return_exceptions=True)
+        await push_room_state(room)
+        await push_room_list()
+
+    elif t == 'leave':
+        await leave_room(client)
+        await client.send({'t': 'left'})
+        await client.send({'t': 'room_list', 'rooms': room_list()})
+
+    elif t == 'start_game':
+        room = rooms.get(client.room)
+        if not room:
+            return
+        if room.host != client.id:
+            await client.send({'t': 'error', 'msg': '방장만 시작할 수 있습니다.'})
+            return
+        if not room.full:
+            await client.send({'t': 'error', 'msg': '정원이 차야 시작할 수 있습니다.'})
+            return
+        room.playing = True
+        log.info('경기 시작 %s "%s" (%d명)', room.id, room.name, len(room.members))
+        msg = {'t': 'game_start', 'room': room.info(), 'members': room.members_info()}
+        await asyncio.gather(*[clients[cid].send(msg) for cid in room.members if cid in clients],
+                             return_exceptions=True)
+        await push_room_list()
+
+    elif t == 'end_game':
+        room = rooms.get(client.room)
+        if not room or room.host != client.id:
+            return
+        room.playing = False
+        log.info('경기 종료 %s "%s"', room.id, room.name)
+        msg = {'t': 'game_end', 'room': room.info()}
+        await asyncio.gather(*[clients[cid].send(msg) for cid in room.members if cid in clients],
+                             return_exceptions=True)
+        await push_room_list()
+
+    elif t == 'relay':
+        # 마일스톤 C용 — 같은 방의 상대에게 그대로 넘긴다. 서버는 내용을 보지 않는다.
+        room = rooms.get(client.room)
+        if not room:
+            return
+        out = {'t': 'relay', 'from': client.id, 'data': msg.get('data')}
+        await asyncio.gather(*[clients[cid].send(out) for cid in room.members
+                               if cid != client.id and cid in clients],
+                             return_exceptions=True)
+
+    elif t == 'ping':
+        await client.send({'t': 'pong', 'ts': msg.get('ts')})
+
+    else:
+        await client.send({'t': 'error', 'msg': '알 수 없는 요청: ' + str(t)})
+
+
+async def handler(ws):
+    path = getattr(getattr(ws, 'request', None), 'path', WS_PATH) or WS_PATH
+    if path.split('?')[0].rstrip('/') not in (WS_PATH, WS_PATH.rstrip('/')):
+        log.warning('잘못된 경로 접속 거부: %s', path)
+        await ws.close(1008, 'bad path')
+        return
+
+    cid = secrets.token_hex(4)
+    client = Client(ws, cid)
+    clients[cid] = client
+    log.info('접속 %s (총 %d명)', cid, len(clients))
+
+    try:
+        async for raw in ws:
+            if len(raw) > 900_000:         # 비정상적으로 큰 프레임은 버린다
+                continue
+            try:
+                msg = json.loads(raw)
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(msg, dict):
+                continue
+            await handle(client, msg)
+    except ConnectionClosed:
+        pass
+    finally:
+        clients.pop(cid, None)
+        await leave_room(client)
+        log.info('종료 %s (총 %d명)', cid, len(clients))
+
+
+async def janitor():
+    """빈 방 청소 — 방이 members 없이 남는 경우를 대비한 안전장치."""
+    while True:
+        await asyncio.sleep(300)
+        now = time.time()
+        dead = [rid for rid, r in rooms.items()
+                if not r.members and now - r.created > IDLE_ROOM_SEC]
+        for rid in dead:
+            rooms.pop(rid, None)
+        if dead:
+            log.info('빈 방 %d개 정리', len(dead))
+            await push_room_list()
+
+
+async def main():
+    stop = asyncio.get_running_loop().create_future()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            asyncio.get_running_loop().add_signal_handler(sig, lambda: stop.done() or stop.set_result(None))
+        except NotImplementedError:
+            pass
+
+    async with serve(handler, HOST, PORT, ping_interval=20, ping_timeout=20, max_size=1_000_000):
+        log.info('WS 서버 시작 — ws://%s:%d%s', HOST, PORT, WS_PATH)
+        await stop
+    log.info('WS 서버 종료')
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
