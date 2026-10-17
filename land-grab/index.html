@@ -102,9 +102,6 @@
   #score .r.me .nm{color:var(--fg);font-weight:700}
   #score .dot{width:10px;height:10px;border-radius:3px;flex:none}
   #score .nm{flex:1;color:var(--dim)}
-  /* 봇 성향 — 성향마다 고유 색이라 순위표에서 바로 구분된다 (25 문서) */
-  #score .tag{font-size:10px;letter-spacing:.04em;padding:1px 5px;border-radius:4px;
-    border:1px solid currentColor;opacity:.92;flex:none}
   #score .pc{font-variant-numeric:tabular-nums;color:var(--fg)}
   #score .r.dead .nm,#score .r.dead .pc{opacity:.4}
 
@@ -1135,7 +1132,10 @@ const BOT_SKILL = {
 };
 
 // ── 봇 성향 ─────────────────────────────────────────────
-// 매 판 봇마다 하나씩 배정한다 (섞어 뽑아 서로 겹치지 않는다). 순위표에 고유 색으로 붙는다.
+// 매 판 봇마다 하나씩 배정한다 (섞어 뽑아 서로 겹치지 않는다).
+// 25-b 문서 — 성향은 화면에 띄우지 않는다. 어떤 봇이 뭘 노리는지는 움직임으로만 드러난다.
+// css 값과 방장→게스트 성향 동기화(entPayload 마지막 칸)는 그대로 남겼다.
+// 다시 보이게 하려면 순위표에 태그 span 하나만 붙이면 된다.
 //   aggr 공격성 · huntR 사냥 거리 · item 아이템 우선도(탐색 반경·가산점 배수)
 //   size 확장 크기 · flee 복귀 민감도(이 거리 안에 적이 오면 돌아간다) · maxTrail 돌아가는 기준
 //   lock 한 상대 고정 추격 · press 정면 압박(수비 약함) · harass 상대 궤적 근처 위협
@@ -2948,11 +2948,9 @@ function buildScoreRows() {
     dot.style.background = CSS_COLOR[e.id - 1];
     const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = e.name;
     const pc = document.createElement('span'); pc.className = 'pc';
-    // 봇이면 성향을 고유 색 태그로 붙인다. 땅 색(슬롯 색)과는 따로다.
-    const tag = document.createElement('span'); tag.className = 'tag';
-    row.append(dot, nm, tag, pc);
+    row.append(dot, nm, pc);
     scoreEl.appendChild(row);
-    return { ent: e, row, pc, tag };
+    return { ent: e, row, pc };
   });
 }
 
@@ -2968,11 +2966,6 @@ function drawHud(now, s) {
       r.pc.textContent = (share(r.ent) * 100).toFixed(1) + '%';
       r.row.classList.toggle('dead', !r.ent.alive);
       r.row.style.order = rank.indexOf(r.ent);
-      // 봇 성향 — 글자는 성향 이름, 색은 성향마다 고유 (사람은 빈 칸)
-      const pr = r.ent.bot ? r.ent.persona : null;
-      const tg = pr ? pr.tag : '';
-      if (r.tag.textContent !== tg) r.tag.textContent = tg;
-      r.tag.style.color = pr ? pr.css : 'transparent';
     });
     const t = Math.max(0, matchTime);
     const m = (t / 60) | 0, sec = (t % 60) | 0;
