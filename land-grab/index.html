@@ -886,7 +886,11 @@ function stepCells(ent, gx, gz) {
 
   let cx = ent.gx, cz = ent.gz;
   if (Math.abs(gx - cx) + Math.abs(gz - cz) > 64) {   // 순간이동(리스폰 등)은 잇지 않는다
-    ent.gx = gx; ent.gz = gz;
+    // 이전 칸을 지운 뒤 넘긴다. 여기서 ent.gx/gz 를 새 칸으로 '먼저' 갱신하면
+    // stepCell 첫 줄의 `gx === ent.gx && gz === ent.gz` 에 걸려 즉시 return 하고,
+    // 그 칸의 궤적 찍기·집 복귀 capture·아이템 줍기가 통째로 빠진다 (26 문서).
+    // 위 `ent.gx < 0` 분기와 같은 뜻 — 이어 붙일 이전 칸이 없다는 표시다.
+    ent.gx = -1; ent.gz = -1;
     stepCell(ent, gx, gz);
     return;
   }
