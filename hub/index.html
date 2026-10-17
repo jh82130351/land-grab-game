@@ -69,9 +69,19 @@ const GAMES = [
     tags: ['3D', '멀티', '좀비 · 건설'],
     ready: true,
   },
+  {
+    id: 'br',
+    name: '배틀로얄',
+    desc: '1km 들판에 떨어져 총을 주워 싸운다. 안전구역이 점점 좁아지고 마지막 한 명이 남을 때까지 이어진다.',
+    icon: '🪂',
+    tags: ['3D', '최대 8인', '총 · 서바이벌'],
+    // 아직 걸어다닐 수만 있다(01 단계). 총·파밍·자기장이 들어오면 true 로 바꾼다 —
+    // 눌러서 들어갔는데 할 게 없으면 그게 더 나쁘다.
+    ready: false,
+  },
 ];
 
-const SOON = 1;   // 앞으로 들어올 자리
+const SOON = 0;   // 앞으로 들어올 자리 (배틀로얄이 한 칸 차지했다)
 
 const grid = document.getElementById('grid');
 
