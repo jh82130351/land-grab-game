@@ -178,7 +178,7 @@ google-chrome --headless=new --enable-unsafe-swiftshader --virtual-time-budget=5
 - 헤드리스 크롬 — 온라인 세션 4회차 + 재접속 1회 + 봇전 12판 완주, 런타임 오류 0건
 
 ## 새 커밋 해시
-- (아래 커밋 참조)
+- `e698a69`
 
 ## 감독 확인 요청 / 남은 이슈
 1. **경기 중 재접속은 여전히 그 경기로 못 돌아간다.** 이번엔 "왜 못 하는지 알려 주고
