@@ -2204,6 +2204,15 @@ function hostTick(now) {
   tickAt = now;
   checkSilent(now);
 
+  // 버린 보고가 있으면 5초마다 사유별로 한 줄 남긴다. 실플레이에서 바로 보려는 것이다.
+  const bad = DROPS.notFound + DROPS.notAlive + DROPS.deaths + DROPS.warp;
+  if (bad !== dropsSeen && now - dropsAt > 5000) {
+    dropsSeen = bad; dropsAt = now;
+    console.warn('[입력 폐기] 총 %d · 받음 %d · 명단없음 %d · 사망중 %d · 사망횟수불일치 %d · 리스폰대기 %d',
+      DROPS.total, DROPS.ok, DROPS.notFound, DROPS.notAlive, DROPS.deaths, DROPS.warp,
+      DROPS.notFound ? { from: DROPS.lastFrom, known: DROPS.knownIds } : '');
+  }
+
   const cells = [];
   if (dirtySet.size) {
     let n = 0;
@@ -2258,11 +2267,13 @@ function applyState(d) {
       // 되살아남을 안 보면 죽은 자리에 그대로 서 있게 되고, 방장은 시작 칸에
       // 세워 둔 나와 어긋난 좌표를 받아 없는 궤적을 긋는다 (17 문서).
       if (deaths !== e.deaths || (!was && e.alive)) {
-        e.deaths = deaths;
         clearPred();                           // 죽거나 되살아났다 — 깔아 둔 예측은 버린다
         pos.set(x, EYE, z); vel.set(0, 0, 0);
         camera.position.copy(pos);
       }
+      // 사망 횟수는 조건 밖에서 무조건 맞춘다. 이 값이 어긋난 채 남으면 내가 보내는 n 이
+      // 계속 틀려, 방장이 보고를 버릴 빌미가 된다 (26-b 문서).
+      e.deaths = deaths;
       e.x = pos.x; e.z = pos.z;
     } else {
       e.x = x; e.z = z; e.deaths = deaths;
@@ -2289,19 +2300,31 @@ function applyState(d) {
 // 방장: 상대가 보낸 위치를 반영한다.
 // netId는 참가자마다 다르므로 게스트가 여럿이어도 각자 다른 ent로 간다.
 function applyInput(fromId, d) {
+  DROPS.total++;
   const e = ents.find((x) => x.netId === fromId);
-  if (!e) return;
+  if (!e) {
+    // 이 사람의 netId 를 모른다. 경기 중 재접속하면 서버가 새 id 를 주는데
+    // 경기 명단은 옛 id 로 묶여 있어 여기로 떨어진다 (26-b 문서).
+    DROPS.notFound++; DROPS.lastFrom = fromId; DROPS.knownIds = ents.map((x) => x.netId);
+    return;
+  }
   e.seen = netNow;                                 // 이 사람은 살아서 보고 중이다
   setWaiting(e, d.r !== undefined && !d.r, '조작 대기 중 — 화면을 클릭해야 움직입니다');
-  if (!e.alive) return;
-  if (d.n !== undefined && d.n !== e.deaths) return;   // 죽기 전 좌표 — 버린다
+  if (!e.alive) { DROPS.notAlive++; return; }
+  if (d.n !== undefined && d.n !== e.deaths) {
+    // 전에는 여기서 보고를 통째로 버렸다. 한 번 어긋나면 그 사람 입력이 계속 사라지고
+    // 화면에는 예측만 그려지다 지워진다. 좌표는 받아 두고 세기만 한다 —
+    // '죽기 직전 옛 좌표'를 막는 일은 아래 warpT 분기가 이미 맡고 있다 (26-b 문서).
+    DROPS.deaths++;
+  }
   if (e.warpT && netNow < e.warpT) {
     // 방금 리스폰시켰다. 상대는 아직 옛 자리를 들고 있으므로, 리스폰 칸 근처 보고가
     // 올 때까지 기다린다. 안 그러면 시작 칸에서 죽은 자리까지 없는 선이 그어진다.
     const dd = Math.abs(gxOf(d.x) - e.gx) + Math.abs(gzOf(d.z) - e.gz);
-    if (dd > 3) return;
+    if (dd > 3) { DROPS.warp++; return; }
     e.warpT = 0;
   }
+  DROPS.ok++;
   e.x = d.x; e.z = d.z;
 }
 
@@ -2588,6 +2611,14 @@ const WS_URL = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.
 const netEl = document.getElementById('netstate');
 
 let sock = null, myId = null, myRoom = null, iamHost = false, netOk = false;
+
+// 방장이 게스트 보고를 왜 버렸는지 사유별로 센다. 실플레이에서 같은 류의 버그를
+// 바로 보기 위한 것이다 — 콘솔에 `__lgDrops` 를 쳐 보면 된다 (26-b 문서).
+//   total 이 아예 안 늘면 보고가 방장까지 오지도 못한 것이다 (방에서 빠졌거나 소켓이 끊겼다).
+const DROPS = { total: 0, ok: 0, notFound: 0, notAlive: 0, deaths: 0, warp: 0,
+                lastFrom: null, knownIds: null };
+window.__lgDrops = DROPS;
+let dropsSeen = 0, dropsAt = 0;
 let retryAt = 0, retryTimer = 0, wantNet = false;
 
 function myName() {
@@ -2626,6 +2657,16 @@ function netConnect() {
       myRoom = null;
       toast('서버와 연결이 끊겼습니다');
       enter3d('lobby');
+    } else if (online && screen === 'game' && !matchOver) {
+      // 경기 중에 끊겼다. 서버는 이 사람을 방에서 빼고 방장은 사망·궤적 삭제로 처리하며,
+      // 재접속하면 새 id 가 발급되어 그 경기로는 돌아갈 수 없다.
+      // 조용히 두면 자기 궤적만 그려지다 1.5초 뒤 사라지고 점령이 안 되는 것처럼 보인다 —
+      // 정현이 보고한 증상이 이것이다 (26-b 문서).
+      matchOver = true;
+      netEndMatch();
+      myRoom = null;
+      toast('연결이 끊겨 경기에서 빠졌습니다');
+      showScreen('menu');
     }
     if (!wantNet) { setNet('연결 종료', 'bad'); return; }
     // 1 → 2 → 4 → 8초로 늘려가며 재접속한다
