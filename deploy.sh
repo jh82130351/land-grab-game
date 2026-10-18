@@ -4,6 +4,7 @@
 #   workspace/games/index.html            ← 이 레포 hub/index.html
 #   workspace/games/land-grab/index.html  ← 이 레포 land-grab/index.html
 #   workspace/games/voxelcraft/index.html ← 이 레포 voxelcraft/index.html
+#   workspace/games/lastdrop/{index.html,game.js} ← 이 레포 lastdrop/ (파일이 둘이다)
 #   workspace/games/fps/index.html        ← fps-prototype 레포 index.html
 #   workspace/games/br/index.html         ← battle-royale 레포 br/index.html
 #
@@ -15,12 +16,15 @@ GAMES=/home/jh-happy/.openclaw-mir/workspace/games
 FPS_SRC=${FPS_SRC:-/tmp/fps-prototype-deploy}
 BR_SRC=${BR_SRC:-/tmp/battle-royale-deploy}
 
-mkdir -p "$GAMES/land-grab" "$GAMES/fps" "$GAMES/br" "$GAMES/voxelcraft"
+mkdir -p "$GAMES/land-grab" "$GAMES/fps" "$GAMES/br" "$GAMES/voxelcraft" "$GAMES/lastdrop"
 
 # 1) 허브·땅따먹기·복셀크래프트 — 이 레포에서
 cp "$REPO/hub/index.html"        "$GAMES/index.html"
 cp "$REPO/land-grab/index.html"  "$GAMES/land-grab/index.html"
 cp "$REPO/voxelcraft/index.html" "$GAMES/voxelcraft/index.html"
+# 라스트 드롭만 파일이 둘이다. Flask 의 /game/<path:fn> 이 game.js 도 그대로 서빙한다.
+cp "$REPO/lastdrop/index.html"   "$GAMES/lastdrop/index.html"
+cp "$REPO/lastdrop/game.js"      "$GAMES/lastdrop/game.js"
 
 # 2) FPS — 별도 레포에서 받아온다
 if [ -d "$FPS_SRC/.git" ]; then
@@ -62,6 +66,7 @@ cp "$BR_SRC/br/index.html" "$GAMES/br/index.html"
 
 echo "배포 완료"
 for f in "$GAMES/index.html" "$GAMES/land-grab/index.html" "$GAMES/voxelcraft/index.html" \
+         "$GAMES/lastdrop/index.html" "$GAMES/lastdrop/game.js" \
          "$GAMES/fps/index.html" "$GAMES/br/index.html"; do
   printf '  %-58s %8d bytes\n' "$f" "$(stat -c%s "$f")"
 done
