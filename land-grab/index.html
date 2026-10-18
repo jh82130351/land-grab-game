@@ -683,6 +683,7 @@ function giveBlock(ent, gx, gz) {
 // 궤적이 닫혔을 때만 호출된다. 바깥에서 flood-fill 해서 닿지 않는 칸을 전부 먹는다.
 function capture(ent) {
   const claimed = [];                          // 이번에 새로 가진 칸 (점령 확대가 쓴다)
+  const hadTrail = ent.trail.length;           // 프로파일용 — 아래에서 비워지기 전에 챙긴다
   for (const i of ent.trail) { trail[i] = 0; owner[i] = ent.id; paint(i); claimed.push(i); }
   ent.trail.length = 0;
   trailDirty = true;
@@ -724,6 +725,7 @@ function capture(ent) {
   if (ent.fxWide > 0) gained += widen(ent, claimed);   // 지속 시간 동안에는 점령마다 붙는다
   recount();
   if (ent === me) sndCapture(gained);
+  if (!ent.bot) profEnd(ent, hadTrail, gained);     // 한 번의 출격이 끝났다 (25-c)
   return gained;
 }
 
@@ -763,6 +765,7 @@ function widen(ent, claimed) {
 
 function kill(ent, by, why) {
   if (!ent || !ent.alive) return;
+  if (!ent.bot) profEnd(ent, ent.trail.length, 0);  // 실패한 출격도 표본이다 (25-c)
   ent.alive = false;
   ent.deaths++;
   ent.respawn = RESPAWN_SEC;
@@ -839,6 +842,7 @@ function stepCell(ent, gx, gz) {
   if (!inGrid(gx, gz)) return;
   if (gx === ent.gx && gz === ent.gz) return;
   ent.gx = gx; ent.gz = gz;
+  if (!ent.bot) profStep(ent, gx, gz);       // 사람만 관찰한다 (25-c)
 
   const i = gz * GRID + gx;
   takeItem(ent, i);                       // 빈 슬롯이 있으면 줍는다 (19 문서)
@@ -969,6 +973,7 @@ function takeItem(ent, i) {
   const slot = ent.slots.indexOf(0);
   if (slot < 0) return;                                  // 슬롯이 다 찼다 — 그대로 남는다
   ent.slots[slot] = items[n].k;
+  if (!ent.bot) (ent.pf || (ent.pf = newPf())).take[slot] = matchSecs - matchTime;
   items.splice(n, 1);
   itemsDirty = true;
   if (ent === me) { toast(SKILLS[ent.slots[slot]].name + ' 획득 · ' + (slot + 1) + '번 칸'); sndItem(); }
@@ -999,6 +1004,10 @@ function useSlot(ent, slot) {
   if (!(slot >= 0 && slot < SLOTS)) return;
   const k = ent.slots[slot];
   if (!k) return;
+  if (!ent.bot && ent.pf && ent.pf.take[slot]) {    // 쥐고 있던 시간 — 즉시형인지 아껴두는형인지
+    profMix('hold', Math.max(0, (matchSecs - matchTime) - ent.pf.take[slot]), 'n');
+    ent.pf.take[slot] = 0;
+  }
   ent.slots[slot] = 0;
   const sk = SKILLS[k];
   if (sk.key === 'boost') ent.fxBoost = Math.max(ent.fxBoost, sk.sec);
@@ -1124,6 +1133,123 @@ function dangerFoes(b) {
   return out;
 }
 
+// ── 사람 플레이 프로파일 (25-c) ─────────────────────────
+// 사람 플레이어만 관찰해 '어떻게 노는지'를 요약값으로 남긴다. 머신러닝이 아니라 누적 평균이다.
+// 봇은 관찰하지 않는다 — 봇이 봇을 베끼면 값이 제자리에서 맴돈다.
+// 온라인에서는 방장만 stepMatch 를 돌리므로 프로파일도 방장 로컬에 쌓인다.
+const PROF_KEY = 'lg.humanProfile.v1';
+const PROF_CAP = 120;        // 표본 상한. 넘으면 최근 쪽에 더 무게가 실려 변화를 따라간다
+const PROF_MIN = 3;          // 이만큼 쌓이기 전에는 모방하지 않고 '만능'으로 둔다 (한 판에 보통 몇 번 나갔다 온다)
+
+const PROFILE = {
+  n: 0,          // 출격 표본 수
+  trail: 0,      // 한 번 나갔다 올 때 궤적 길이 (칸)
+  turns: 0,      // 그 동안 꺾은 횟수
+  run: 0,        // 직진 구간 길이 (칸)
+  away: 0,       // 집에서 가장 멀리 나간 거리 (칸)
+  an: 0, area: 0,// 점령 성공분만 따로 — 둘러싼 면적
+  hunt: 0,       // 궤적을 드러낸 시간 중 남의 궤적 가까이 있던 비율
+  sprint: 0,     // 움직인 시간 중 달린 비율
+  hold: 0,       // 아이템을 슬롯에 넣고 쓰기까지 걸린 시간 (초)
+  cw: 0.5,       // 꺾을 때 오른쪽을 고른 비율
+};
+function profLoad() {
+  let raw = null;
+  try { raw = localStorage.getItem(PROF_KEY); } catch (e) { return; }   // 사생활 보호 모드
+  if (!raw) return;
+  try {
+    const o = JSON.parse(raw);
+    for (const k in PROFILE) if (typeof o[k] === 'number' && isFinite(o[k])) PROFILE[k] = o[k];
+    PROFILE.n = Math.min(PROF_CAP, PROFILE.n | 0);
+    PROFILE.an = Math.min(PROF_CAP, PROFILE.an | 0);
+  } catch (e) { /* 깨진 값이면 그냥 처음부터 */ }
+}
+function profSave() {
+  try { localStorage.setItem(PROF_KEY, JSON.stringify(PROFILE)); } catch (e) { /* 무시 */ }
+}
+// 누적 평균. 표본이 상한에 닿으면 그 뒤로는 최근 값에 1/CAP 씩 끌려간다.
+function profMix(key, v, cnt) {
+  const n = Math.min(PROF_CAP, PROFILE[cnt]);
+  PROFILE[key] = (PROFILE[key] * n + v) / (n + 1);
+}
+const newPf = () => ({ lx: undefined, lz: 0, dir: undefined, run: 0, runSum: 0, runN: 0,
+                       turns: 0, cw: 0, ccw: 0, away: 0, outT: 0, huntT: 0,
+                       moveT: 0, runT: 0, px: 0, pz: 0, take: [0, 0, 0] });
+
+// 칸을 하나 밟을 때마다 — 꺾기·직진 구간을 센다 (사람만)
+function profStep(ent, gx, gz) {
+  const p = ent.pf || (ent.pf = newPf());
+  if (p.lx !== undefined) {
+    const dx = Math.sign(gx - p.lx), dz = Math.sign(gz - p.lz);
+    if (dx || dz) {
+      const d = dx ? (dx > 0 ? 0 : 2) : (dz > 0 ? 1 : 3);
+      if (p.dir === undefined) { p.dir = d; p.run = 1; }
+      else if (d === p.dir) p.run++;
+      else {
+        p.turns++; p.runSum += p.run; p.runN++;
+        if ((p.dir + 1) % 4 === d) p.cw++; else if ((p.dir + 3) % 4 === d) p.ccw++;
+        p.dir = d; p.run = 1;
+      }
+    }
+  }
+  p.lx = gx; p.lz = gz;
+}
+
+// 매 프레임 — 출격 거리·사냥·달리기 비율 (사람만)
+function profTick(ent, dt) {
+  const p = ent.pf || (ent.pf = newPf());
+  const sp = Math.hypot(ent.x - p.px, ent.z - p.pz) / Math.max(1e-4, dt);
+  p.px = ent.x; p.pz = ent.z;
+  if (sp > 0.4) { p.moveT += dt; if (sp > (WALK + RUN) / 2) p.runT += dt; }
+  if (!ent.trail.length) return;                       // 궤적이 없으면 출격 중이 아니다
+  p.outT += dt;
+  const away = Math.abs(gxOf(ent.x) - ent.homeGx) + Math.abs(gzOf(ent.z) - ent.homeGz);
+  if (away > p.away) p.away = away;
+  const fd = foeTrailDir(ent, 8);                      // 남의 궤적이 8칸 안에 있나
+  if (fd >= 0) p.huntT += dt;
+}
+
+// 한 번의 출격이 끝났다 (점령했거나 죽었거나) — 요약값에 합산한다
+function profEnd(ent, trailLen, gained) {
+  const p = ent.pf;
+  if (!p || trailLen < 6) { ent.pf = newPf(); return; }   // 너무 짧으면 표본이 안 된다
+  if (p.run > 0) { p.runSum += p.run; p.runN++; }
+  profMix('trail', trailLen, 'n');
+  profMix('turns', p.turns, 'n');
+  profMix('run', p.runN ? p.runSum / p.runN : trailLen, 'n');
+  profMix('away', p.away, 'n');
+  if (p.outT > 0.5) profMix('hunt', Math.min(1, p.huntT / p.outT), 'n');
+  if (p.moveT > 0.5) profMix('sprint', Math.min(1, p.runT / p.moveT), 'n');
+  if (p.cw + p.ccw > 0) profMix('cw', p.cw / (p.cw + p.ccw), 'n');
+  PROFILE.n = Math.min(PROF_CAP, PROFILE.n + 1);
+  if (gained > 0) { profMix('area', gained, 'an'); PROFILE.an = Math.min(PROF_CAP, PROFILE.an + 1); }
+  ent.pf = newPf();
+}
+
+// 사람 프로파일 → 학습형 봇의 파라미터. '스타일'만 옮기고 실력은 건드리지 않는다.
+// 표본이 모자라면 null 을 돌려 '만능' 값을 그대로 쓰게 한다 (첫 판·시크릿 모드).
+function mimicAI() {
+  const P = PROFILE;
+  if (P.n < PROF_MIN) return null;
+  const j = (v, q) => v * (1 - q + Math.random() * q * 2);     // ± 약간 랜덤
+  const cl = (lo, hi, v) => Math.max(lo, Math.min(hi, v));
+  return {
+    size:     cl(6, 40, Math.round(j(P.run * 1.1 + P.away * 0.25, 0.18))),  // 직진 길이 + 출격 거리
+    aggr:     cl(0.05, 0.95, j(P.hunt * 1.6, 0.25)),                        // 사냥 비율
+    huntR:    cl(15, 70, Math.round(j(20 + P.hunt * 60, 0.20))),
+    item:     cl(0.5, 2.0, j(1.5 - P.hold / 8, 0.20)),                      // 아껴두면 덜 찾는다
+    flee:     cl(8, 30, Math.round(j(26 - P.trail / 18, 0.20))),            // 길게 다니면 복귀 둔감
+    // 사람 궤적 길이와 '자기가 그릴 도형의 둘레' 중 큰 쪽. 짧게 잡으면 제 도형을
+    // 중간에 접고 돌아가 버려서 모방이 안 보인다.
+    maxTrail: cl(60, 400, Math.round(j(Math.max(P.trail * 1.3,
+                 (Math.min(10, P.turns) + 1) * P.run * 1.25), 0.15))),
+    sprint:   cl(0.5, 0.95, j(0.45 + P.sprint * 0.5, 0.10)),                // 아래 0.5 로 잘라 실력 유지
+    useFast:  cl(0, 1, 1 - Math.min(1, P.hold / 8)),                        // 즉시형 / 아껴두는형
+    prof: { run: cl(3, 40, P.run), turns: cl(1, 10, P.turns), cw: cl(0.1, 0.9, P.cw) },
+  };
+}
+profLoad();
+
 // ── 봇 실력 (전원 공통) ─────────────────────────────────
 // 25단계에서 난이도 차등을 없앴다. 성향은 "뭘 우선하나"만 바꾸고,
 // 판단 정확도는 전원 같은 값을 쓴다 — 판단 주기·달리기 판단·위협 인식·자멸 방지는
@@ -1156,6 +1282,10 @@ const PERSONAS = [
     maxTrail: 320, shapes: ['네모', '나선', '갈고리', '넓적'] },
   { tag: '교란',   css: '#b48cff', size: 18, aggr: 0.50, huntR: 45, item: 0.9, flee: 24,
     maxTrail: 200, harass: 1, shapes: ['납작', '나선', 'L자'] },
+  // 학습형 — 값은 자리만 잡아 둔다. 실제 수치는 사람 프로파일에서 뽑는다 (25-c).
+  // 프로파일이 모자라면(첫 판·시크릿 모드) 아래 만능 값 그대로 쓴다.
+  { tag: '학습형', css: '#ffd166', size: 22, aggr: 0.40, huntR: 40, item: 1.0, flee: 20,
+    maxTrail: 240, mimic: 1, shapes: ['네모', '나선', 'L자', '넓적', '갈고리'] },
 ];
 
 // ── 실수 ────────────────────────────────────────────────
@@ -1219,6 +1349,10 @@ function assignBrains() {
       period: BOT_SKILL.period, whim: BOT_SKILL.whim, sprint: BOT_SKILL.sprint,
       shapes: base.shapes,
     };
+    if (base.mimic) {
+      const m = mimicAI();                 // 표본이 모자라면 null — 만능 값 그대로 간다
+      if (m) { Object.assign(e.ai, m); e.ai.mimic = 1; }
+    }
     e.persona = base;
     e.lockId = 0;
     e.miss = null;
@@ -1229,7 +1363,22 @@ function assignBrains() {
 // ── 도형 뽑기 ───────────────────────────────────────────
 // 나갔다가 집으로 돌아오면 그 사이가 점령된다. 나가는 길만 바꿔도 먹는 모양이 통째로 달라진다.
 // legs = 각 변의 길이(셀), turns = 변과 변 사이에서 꺾는 방향(+1 우, -1 좌).
+// 사람이 그리던 모양을 따라 그린다 — 꺾는 횟수와 직진 길이를 그대로 쓴다.
+// 큰 네모로 돌던 사람이면 변이 길고 적게, 지그재그면 짧고 많이 나온다.
+function mimicShape(b) {
+  const P = b.ai.prof;
+  const n = Math.max(2, Math.min(10, Math.round(P.turns * (0.8 + Math.random() * 0.5))));
+  const t = Math.random() < P.cw ? 1 : -1;        // 사람이 더 자주 꺾던 쪽
+  const legs = [], turns = [];
+  for (let k = 0; k <= n; k++) {
+    legs.push(Math.max(3, Math.round(P.run * (0.7 + Math.random() * 0.7))));
+    if (k < n) turns.push(t);
+  }
+  return { name: '모방', legs, turns };
+}
+
 function pickShape(b, size) {
+  if (b.ai.mimic && b.ai.prof) return mimicShape(b);
   const name = b.ai.shapes[(Math.random() * b.ai.shapes.length) | 0];
   const t = Math.random() < 0.5 ? 1 : -1;
   const L = (m) => Math.max(4, Math.round(size * m * (0.75 + Math.random() * 0.5)));
@@ -1333,7 +1482,9 @@ function findItem(b, radius) {
 
 // 지금 들고 있는 스킬 중 이 상황에 맞는 걸 꺼낸다. 배역마다 쓰는 때가 다르다.
 function botUseSkill(b, ai) {
-  const risky = b.trail.length > 25 && b.threat < ai.flee * 1.4;
+  // 학습형은 사람이 아이템을 쥐고 있던 시간을 따라간다 — 즉시 쓰는 사람이면 문턱이 낮다 (25-c)
+  const fast = ai.useFast || 0;
+  const risky = b.trail.length > 25 - fast * 15 && b.threat < ai.flee * (1.4 + fast * 0.4);
   for (let k = 0; k < SLOTS; k++) {
     const id = b.slots[k];
     if (!id) continue;
@@ -1344,7 +1495,8 @@ function botUseSkill(b, ai) {
     // 점령 확대는 '큰 폐곡선을 닫을 때' 켠다. 돌아가는 중이거나 이미 충분히
     // 크게 둘렀을 때라야 두 겹이 통째로 붙는다 (25 문서).
     if (key === 'wide' && b.fxWide <= 0
-        && (b.phase === 'home' ? b.trail.length > 40 : b.trail.length > ai.maxTrail * 0.55)) {
+        && (b.phase === 'home' ? b.trail.length > 40 - fast * 20
+                               : b.trail.length > ai.maxTrail * (0.55 - fast * 0.2))) {
       useSlot(b, k); return;
     }
   }
@@ -2032,6 +2184,8 @@ function stepMatch(dt) {
     else stepCells(e, gxOf(e.x), gzOf(e.z));   // 온라인 상대 — 보고 사이 칸까지 메운다
   }
 
+  for (const e of ents) if (!e.bot && e.alive) profTick(e, dt);   // 사람 관찰 (25-c)
+
   for (const e of ents) {
     if (e.alive) continue;
     e.respawn -= dt;
@@ -2047,6 +2201,7 @@ function endMatch() {
   if (matchOver) return;
   matchOver = true;
   recount();
+  profSave();                                  // 이 판에서 본 사람 스타일을 남긴다 (25-c)
 
   if (online && iamHost) {
     const cells = [];
