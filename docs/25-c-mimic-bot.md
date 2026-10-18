@@ -161,7 +161,7 @@ google-chrome --headless=new --enable-unsafe-swiftshader --virtual-time-budget=6
 - 헤드리스 크롬 — 스타일 학습 6판 + 변환 5회 + 봇전 15판 완주, 런타임 오류 0건
 
 ## 새 커밋 해시
-- (아래 커밋 참조)
+- `b6e4ed4`
 
 ## 감독 확인 요청 / 남은 이슈
 1. **직접 몇 판 돌고 나서 학습형 봇이 내 스타일로 도는지 봐 주시기 바란다.** 이게 진짜 검증이다.
