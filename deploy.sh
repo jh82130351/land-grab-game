@@ -4,9 +4,8 @@
 #   workspace/games/index.html            ← 이 레포 hub/index.html
 #   workspace/games/land-grab/index.html  ← 이 레포 land-grab/index.html
 #   workspace/games/voxelcraft/index.html ← 이 레포 voxelcraft/index.html
-#   workspace/games/lastdrop/{index.html,game.js} ← 이 레포 lastdrop/ (파일이 둘이다)
 #   workspace/games/fps/index.html        ← fps-prototype 레포 index.html
-#   workspace/games/br/index.html         ← battle-royale 레포 br/index.html
+#   workspace/games/br/{index.html,game.js} ← battle-royale 레포 br/ (파일이 둘이다)
 #
 # fps-prototype·battle-royale은 별도 레포다. 여기서 받아다 복사만 한다 (24 문서 참조).
 # Flask는 games/ 아래 폴더를 그대로 서빙하므로 app.py는 안 고쳐도 된다 → 재기동 불필요.
@@ -16,15 +15,12 @@ GAMES=/home/jh-happy/.openclaw-mir/workspace/games
 FPS_SRC=${FPS_SRC:-/tmp/fps-prototype-deploy}
 BR_SRC=${BR_SRC:-/tmp/battle-royale-deploy}
 
-mkdir -p "$GAMES/land-grab" "$GAMES/fps" "$GAMES/br" "$GAMES/voxelcraft" "$GAMES/lastdrop"
+mkdir -p "$GAMES/land-grab" "$GAMES/fps" "$GAMES/br" "$GAMES/voxelcraft"
 
 # 1) 허브·땅따먹기·복셀크래프트 — 이 레포에서
 cp "$REPO/hub/index.html"        "$GAMES/index.html"
 cp "$REPO/land-grab/index.html"  "$GAMES/land-grab/index.html"
 cp "$REPO/voxelcraft/index.html" "$GAMES/voxelcraft/index.html"
-# 라스트 드롭만 파일이 둘이다. Flask 의 /game/<path:fn> 이 game.js 도 그대로 서빙한다.
-cp "$REPO/lastdrop/index.html"   "$GAMES/lastdrop/index.html"
-cp "$REPO/lastdrop/game.js"      "$GAMES/lastdrop/game.js"
 
 # 2) FPS — 별도 레포에서 받아온다
 if [ -d "$FPS_SRC/.git" ]; then
@@ -62,12 +58,14 @@ else
   rm -rf "$BR_SRC"
   gh repo clone jh82130351/battle-royale "$BR_SRC" -- --quiet
 fi
+# 배틀로얄은 파일이 둘이다. Flask 의 /game/<path:fn> 이 game.js 도 그대로 서빙한다.
+# 라스트 드롭은 여기로 합쳐졌다 — /game/br/ 하나만 쓴다 (27 문서).
 cp "$BR_SRC/br/index.html" "$GAMES/br/index.html"
+cp "$BR_SRC/br/game.js"    "$GAMES/br/game.js"
 
 echo "배포 완료"
 for f in "$GAMES/index.html" "$GAMES/land-grab/index.html" "$GAMES/voxelcraft/index.html" \
-         "$GAMES/lastdrop/index.html" "$GAMES/lastdrop/game.js" \
-         "$GAMES/fps/index.html" "$GAMES/br/index.html"; do
+         "$GAMES/fps/index.html" "$GAMES/br/index.html" "$GAMES/br/game.js"; do
   printf '  %-58s %8d bytes\n' "$f" "$(stat -c%s "$f")"
 done
 echo "  fps 원본 커밋: $(git -C "$FPS_SRC" rev-parse --short HEAD)$([ "${AHEAD:-0}" -gt 0 ] && echo ' (미푸시)')"
