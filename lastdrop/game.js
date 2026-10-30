@@ -378,7 +378,12 @@ const me = () => ents[0];
 // ══ 비행기와 낙하 ════════════════════════════════════════════
 // 배그의 시작. 항로를 가로지르는 수송기에서 Space 로 이탈하고,
 // 자유낙하 → 일정 고도에서 산개 → 조종해 내려선다.
-const PLANE_Y = 360, PLANE_T = 30, CHUTE_Y = 115;
+const PLANE_Y = 360, PLANE_T = 30, CHUTE_Y = 70;
+// 낙하 물리 — 나와 봇이 똑같이 쓴다 (lastdrop-03). 비행기에서 뛰면 약 10초에 땅.
+//   자유낙하: 가속 g, 최고 v, 수평 h · W 다이브(더 빨리 떨어지고 앞으로 조금) · S 활강(천천히, 앞으로 멀리)
+//   낙하산: 고도 CHUTE_Y 에서 자동, 하강 chuteV, 수평 chuteH
+const FALL = { g:42, v:65, h:26, diveV:80, diveH:14, glideV:45, glideH:34, chuteV:14, chuteH:15, slow:30 };
+const SEA_Y = -2;                          // 이보다 낮은 땅은 물가 — 착지점으로 안 쓴다
 const plane = { ax:0, az:0, bx:0, bz:0, t:0, mesh:null, done:false };
 let matchState = 'drop';                 // drop → live → over
 function buildPlane(){
@@ -399,11 +404,112 @@ const planePos = (t) => ({
   x: plane.ax + (plane.bx - plane.ax) * t,
   z: plane.az + (plane.bz - plane.az) * t,
 });
+// 착지점으로 쓸 수 있나 — 육지이고, 벽·지붕·바위 발자국 밖
+function landOK(x, z){
+  if (Math.abs(x) > HALF-8 || Math.abs(z) > HALF-8 || heightAt(x, z) < SEA_Y) return false;
+  for (const c of cols)
+    if (x > c.x-c.hw-1 && x < c.x+c.hw+1 && z > c.z-c.hd-1 && z < c.z+c.hd+1 && c.y1 > heightAt(x, z) + 0.3) return false;
+  return true;
+}
+// 집 h 둘레의 빈 땅 (k 로 시도마다 다른 자리)
+function spotNear(h, i, k){
+  for (let n = 0; n < 24; n++){
+    const a = rh(i, 80+n, SEED+k) * 6.283, r = Math.max(h.w, h.d)/2 + 3 + rh(i, 120+n, SEED+k) * 16;
+    const x = h.x + Math.cos(a)*r, z = h.z + Math.sin(a)*r;
+    if (landOK(x, z)) return { x, z };
+  }
+  return null;
+}
 // 봇은 건물 쪽에 내린다 — 거기 전리품이 많다
 function pickLanding(i){
-  const h = houses[(rh(i, 77, SEED+91) * houses.length) | 0];
-  if (!h) return { x:(rh(i,78,SEED)*2-1)*HALF*0.6, z:(rh(i,79,SEED)*2-1)*HALF*0.6 };
-  return { x: h.x + (rh(i,80,SEED)-0.5)*44, z: h.z + (rh(i,81,SEED)-0.5)*44 };
+  for (let k = 0; k < 6; k++){
+    const h = houses[(rh(i, 77+k, SEED+91) * houses.length) | 0];
+    const s = h && spotNear(h, i, k*7);
+    if (s) return s;
+  }
+  for (let k = 0; k < 200; k++){
+    const x = (rh(i,78+k,SEED)*2-1)*HALF*0.6, z = (rh(i,79+k,SEED)*2-1)*HALF*0.6;
+    if (landOK(x, z)) return { x, z };
+  }
+  return { x:0, z:0 };
+}
+// 기본 자세(키 안 누름)로 뛰었을 때 수평으로 갈 수 있는 거리
+function dropReach(gy){
+  let y = PLANE_Y - 3, vy = -6, d = 0;
+  const dt = 0.05;
+  while (y > gy){
+    const chute = y < CHUTE_Y;
+    vy = chute ? -FALL.chuteV : Math.max(-FALL.v, vy - FALL.g*dt);
+    y += vy*dt; d += (chute ? FALL.chuteH : FALL.h) * dt;
+  }
+  return d;
+}
+// 봇마다 착지점과 뛰는 시점을 정한다. 착지점이 멀면 일찍 뛰고, 항로에서 못 닿으면 닿는 건물로 바꾼다
+function planDrops(){
+  const pathD = (l) => {                        // 항로에서 l 까지 가장 가까운 거리와 그 t
+    let bd = 1e9, bt = 0;
+    for (let t = 0.02; t <= 0.9; t += 0.005){ const p = planePos(t), d = Math.hypot(p.x-l.x, p.z-l.z); if (d < bd){ bd = d; bt = t; } }
+    return { d:bd, t:bt };
+  };
+  for (const e of ents){
+    if (!e.bot) continue;
+    const fits = (q) => { const r = dropReach(heightAt(q.x, q.z)) * 0.8, cc = pathD(q); return cc.d <= r ? { l:q, reach:r, c:cc } : null; };
+    let f = fits(pickLanding(e.id));
+    // 못 닿는다 — 항로에서 가까운 집 둘레에서 닿는 자리를 찾는다 (집 중심이 아니라 고른 자리로 판정)
+    if (!f){
+      const near = houses.map(h => ({ h, d: pathD(h).d })).sort((a,b) => a.d - b.d).slice(0, 12);
+      for (let k = 0; k < near.length * 2 && !f; k++){
+        const h = near[(rh(e.id, 99+k, SEED+5) * near.length) | 0].h;
+        const q = spotNear(h, e.id, 333 + k);
+        if (q) f = fits(q);
+      }
+    }
+    // 그래도 없으면 항로 바로 아래 육지
+    for (let k = 0; k < 200 && !f; k++){
+      const p = planePos(0.12 + rh(e.id, 200+k, SEED+6) * 0.74), a = rh(e.id, 400+k, SEED+6) * 6.283, r = rh(e.id, 600+k, SEED+6) * 80;
+      const q = { x: p.x + Math.cos(a)*r, z: p.z + Math.sin(a)*r };
+      if (landOK(q.x, q.z)) f = fits(q);
+    }
+    if (!f){ const q = planePos(0.5); f = { l:q, reach:dropReach(heightAt(q.x, q.z)) * 0.8, c:pathD(q) }; }
+    let l = f.l, reach = f.reach, c = f.c;
+    let t0 = c.t;                                // 들어오는 쪽에서 처음 닿는 시점
+    while (t0 > 0.02){ const p = planePos(t0 - 0.005); if (Math.hypot(p.x-l.x, p.z-l.z) > reach) break; t0 -= 0.005; }
+    e.lx = l.x; e.lz = l.z;
+    e.dropT = t0 + (c.t - t0) * rh(e.id, 71, SEED+88);   // 처음 닿는 때 ~ 가장 가까울 때 사이 아무 때나
+  }
+}
+// 한 프레임 낙하. 수평 의도(ix,iz: 이번 프레임 원하는 속도 m/s)와 다이브·활강 상태를 받는다
+function fallStep(e, dt, ix, iz, mode){
+  const chute = e.drop === 'chute';
+  if (chute) e.vy = -FALL.chuteV;
+  else {
+    const vmax = mode === 'dive' ? FALL.diveV : mode === 'glide' ? FALL.glideV : FALL.v;
+    e.vy = e.vy > -vmax ? Math.max(-vmax, e.vy - FALL.g*dt) : Math.min(-vmax, e.vy + FALL.slow*dt);
+  }
+  e.y += e.vy * dt;
+  e.x = Math.max(-HALF+6, Math.min(HALF-6, e.x + ix*dt));
+  e.z = Math.max(-HALF+6, Math.min(HALF-6, e.z + iz*dt));
+  if (!chute && e.y < CHUTE_Y){ e.drop = 'chute'; return 'open'; }
+  const g = landFloor(e.x, e.z, e.y - e.vy*dt);
+  if (e.y <= g + 0.1){
+    e.y = g; e.vy = 0; e.drop = 'ground'; unstick(e);
+    e.landAt = elapsed;
+    return 'land';
+  }
+  return null;
+}
+// 지금 상태에서 기본 자세로 착지까지 남은 초 (HUD)
+function etaLand(e){
+  const g = heightAt(e.x, e.z);
+  if (e.drop === 'chute') return Math.max(0, (e.y - g) / FALL.chuteV);
+  const v0 = -e.vy, a = FALL.g, v = FALL.v, dist = Math.max(0, e.y - Math.max(CHUTE_Y, g));
+  let t;
+  if (v0 >= v) t = dist / v0;
+  else {
+    const t1 = (v - v0) / a, d1 = v0*t1 + a*t1*t1/2;
+    t = d1 >= dist ? (-v0 + Math.sqrt(v0*v0 + 2*a*dist)) / a : t1 + (dist - d1) / v;
+  }
+  return t + Math.max(0, Math.min(CHUTE_Y, e.y) - g) / FALL.chuteV;
 }
 const CHUTE_MAT = new THREE.MeshStandardMaterial({ color:0xdfe4e8, roughness:0.8, flatShading:true });
 function chuteMesh(){
@@ -426,51 +532,50 @@ function updateDrop(dt){
     if (e === me()){
       if (e.drop === 'plane'){
         e.x = pp.x; e.z = pp.z; e.y = PLANE_Y - 3;
-        if (keys.Space || plane.t > 0.92){ e.drop = 'free'; e.vy = -6; feed('<i>이탈 — 낙하 중</i>'); }
+        if (keys.Space || plane.t > 0.92){ e.drop = 'free'; e.vy = -6; e.jumpAt = elapsed; feed('<i>이탈 — 낙하 중</i>'); }
       } else {
         const chute = e.drop === 'chute';
-        e.vy = chute ? -8.5 : Math.max(-58, e.vy - 42*dt);
-        e.y += e.vy * dt;
         const y = yawO.rotation.y;
-        let mx=0, mz=0;
-        if (keys.KeyW){ mx -= Math.sin(y); mz -= Math.cos(y); }
-        if (keys.KeyS){ mx += Math.sin(y); mz += Math.cos(y); }
-        if (keys.KeyD){ mx += Math.cos(y); mz -= Math.sin(y); }
-        if (keys.KeyA){ mx -= Math.cos(y); mz += Math.sin(y); }
-        const L = Math.hypot(mx,mz);
-        if (L > 0){ const sp = (chute ? 15 : 26) * dt; e.x += mx/L*sp; e.z += mz/L*sp; }
-        e.x = Math.max(-HALF+6, Math.min(HALF-6, e.x));
-        e.z = Math.max(-HALF+6, Math.min(HALF-6, e.z));
-        if (!chute && e.y < CHUTE_Y){ e.drop = 'chute'; sChute(); feed('<i>낙하산 산개</i>'); }
-        const g = landFloor(e.x, e.z, e.y - e.vy*dt);
-        if (e.y <= g + 0.1){ e.y = g; e.vy = 0; e.drop = 'ground'; unstick(e); onLanded(); }
+        const fx = -Math.sin(y), fz = -Math.cos(y), rx = Math.cos(y), rz = -Math.sin(y);
+        let ix = 0, iz = 0, mode = null;
+        if (chute){                                // 낙하산 — WASD 로 15m/s
+          let mx = 0, mz = 0;
+          if (keys.KeyW){ mx += fx; mz += fz; }
+          if (keys.KeyS){ mx -= fx; mz -= fz; }
+          if (keys.KeyD){ mx += rx; mz += rz; }
+          if (keys.KeyA){ mx -= rx; mz -= rz; }
+          const L = Math.hypot(mx, mz);
+          if (L > 0){ ix = mx/L*FALL.chuteH; iz = mz/L*FALL.chuteH; }
+        } else {                                   // 자유낙하 — W 다이브, S 활강, A/D 옆으로
+          const f = keys.KeyW ? FALL.diveH : keys.KeyS ? FALL.glideH : 0;
+          mode = keys.KeyW ? 'dive' : keys.KeyS ? 'glide' : null;
+          const side = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
+          ix = fx*f + rx*side*FALL.h; iz = fz*f + rz*side*FALL.h;
+          const L = Math.hypot(ix, iz), cap = Math.max(FALL.h, f);
+          if (L > cap){ ix *= cap/L; iz *= cap/L; }
+        }
+        const r = fallStep(e, dt, ix, iz, mode);
+        if (r === 'open'){ sChute(); feed('<i>낙하산 산개</i>'); }
+        if (r === 'land') onLanded();
       }
       yawO.position.set(e.x, e.y + eyeH(e), e.z);
       continue;
     }
-    // 봇 — 항로의 제 지점에서 뛰어 자기 착지점으로 내려간다
+    // 봇 — 정해 둔 시점에 뛰어, 나와 같은 물리로 자기 착지점까지 날아간다
     if (e.drop === 'plane'){
       if (plane.t >= e.dropT){
-        const l = pickLanding(e.id);
-        e.lx = l.x; e.lz = l.z;
-        e.px = pp.x; e.pz = pp.z; e.pt = 0;
-        e.drop = 'chute';
-        e.chute = chuteMesh(); scene.add(e.chute);
-      } else { e.y = PLANE_Y; e.x = pp.x; e.z = pp.z; if (e.mesh) e.mesh.visible = false; }
-      continue;
+        e.drop = 'free'; e.vy = -6; e.x = pp.x; e.z = pp.z; e.y = PLANE_Y - 3; e.jumpAt = elapsed;
+        if (e.mesh) e.mesh.visible = true;
+      } else { e.y = PLANE_Y; e.x = pp.x; e.z = pp.z; if (e.mesh) e.mesh.visible = false; continue; }
     }
-    e.pt = Math.min(1, e.pt + dt / 9);
-    const k = e.pt;
-    e.x = e.px + (e.lx - e.px) * k;
-    e.z = e.pz + (e.lz - e.pz) * k;
-    const gy = heightAt(e.x, e.z);
-    e.y = PLANE_Y + (gy - PLANE_Y) * (k*k*0.35 + k*0.65);
-    if (e.mesh){ e.mesh.visible = true; e.mesh.position.set(e.x, e.y, e.z); }
+    const h = e.drop === 'chute' ? FALL.chuteH : FALL.h;
+    const dx = e.lx - e.x, dz = e.lz - e.z, d = Math.hypot(dx, dz);
+    const sp = Math.min(h, d / Math.max(dt, 1e-3));   // 착지점 위에 오면 멈춘다
+    const r = fallStep(e, dt, d > 0.01 ? dx/d*sp : 0, d > 0.01 ? dz/d*sp : 0, null);
+    if (r === 'open'){ e.chute = chuteMesh(); scene.add(e.chute); }
+    if (e.mesh){ e.mesh.position.set(e.x, e.y, e.z); }
     if (e.chute) e.chute.position.set(e.x, e.y + 4.4, e.z);
-    if (k >= 1){
-      e.y = gy; e.drop = 'ground';
-      if (e.chute){ scene.remove(e.chute); e.chute = null; }
-    }
+    if (r === 'land' && e.chute){ scene.remove(e.chute); e.chute = null; }
   }
   if (ents.every(e => e.drop === 'ground')) goLive();
 }
@@ -1628,7 +1733,8 @@ function frame(now){
       hudT = 0;
       aliveEl.textContent = aliveN();
       const h = Math.max(0, Math.round(me().y - heightAt(me().x, me().z)));
-      zoneB.textContent = me().drop === 'plane' ? 'Space 로 이탈' : '고도 ' + h + 'm';
+      zoneB.textContent = me().drop === 'plane' ? 'Space 로 이탈'
+        : '고도 ' + h + 'm · 착지 ' + Math.ceil(etaLand(me())) + '초';
       drawMap();
     }
   }
@@ -1653,7 +1759,7 @@ function boot(){
   initFx();
   nextPhase();
   // 봇은 항로의 서로 다른 지점에서 뛴다
-  ents.forEach((e, i) => { if (e.bot) e.dropT = 0.18 + rh(i, 71, SEED+88) * 0.62; });
+  planDrops();
   const p = me();
   const pp = planePos(0);
   p.x = pp.x; p.z = pp.z; p.y = PLANE_Y - 3;
