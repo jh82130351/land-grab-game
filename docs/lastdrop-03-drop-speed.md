@@ -69,7 +69,7 @@ BR_SRC=~/battle-royale ./deploy.sh
 `node --check lastdrop/game.js` 통과.
 
 ## 새 커밋 해시
-(커밋 후 기록)
+a134b4d — feat(lastdrop-03) 본 커밋
 
 ## 감독 확인 요청 사항 / 남은 이슈
 - 실브라우저 체감(정현): 10초 낙하의 속도감, W 다이브·S 활강 느낌, 낙하산이 70m 에서 펴지는 타이밍.
