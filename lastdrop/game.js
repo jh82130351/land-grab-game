@@ -22,12 +22,23 @@ const ARMOR = [null,
 ];
 // 회복 — 배그의 네 가지
 const HEALS = {
-  band:  { n:'붕대',       t:2.0, hp:12, cap:75,  max:8 },
-  kit:   { n:'구급상자',   t:4.0, hp:45, cap:90,  max:4 },
-  med:   { n:'구급킷',     t:6.0, hp:100, cap:100, max:2 },
-  drink: { n:'에너지드링크', t:3.0, boost:28, max:6 },
+  band:  { n:'붕대',       t:2.0, hp:12, cap:75 },
+  kit:   { n:'구급상자',   t:4.0, hp:45, cap:90 },
+  med:   { n:'구급킷',     t:6.0, hp:100, cap:100 },
+  drink: { n:'에너지드링크', t:3.0, boost:28 },
 };
 const HEAL_ORDER = ['band','kit','med','drink'];
+// 탄 — 예비탄은 가방에 종류별로 쌓인다. 같은 탄을 쓰는 총(권총·SMG)은 가방 9mm 를 같이 꺼내 쓴다 (lastdrop-04)
+//   w 한 발 무게 · pick 전리품 한 개에 든 양
+const AMMO = {
+  '9mm':  { n:'9mm',      w:0.5,  pick:30 },
+  '5.56': { n:'5.56mm',   w:0.5,  pick:30 },
+  '12g':  { n:'12게이지', w:1.25, pick:10 },
+  '7.62': { n:'7.62mm',   w:0.5,  pick:15 },
+};
+const AMMO_ORDER = ['9mm','5.56','12g','7.62'];
+const HEAL_W = { band:2, kit:10, med:20, drink:4 };   // 회복템 한 개 무게
+const BAG_CAP = [150, 200, 250, 300];                 // 가방 없음 · Lv1 · Lv2 · Lv3
 // 봇 난이도 — 봇마다 따로 추첨한다. 플레이 중엔 숨기고 킬피드·순위표에만 보인다 (lastdrop-01 문서)
 //   react 표적을 잡고 첫 발까지(초) · sp 퍼짐 배수 · sight 시야(m) · rest 연사 뒤 쉼(초)
 //   aim 거리 1m 당 조준 오차(m) · move 움직임 단계 · head 머리를 노리는 비율
@@ -50,11 +61,11 @@ const SEED = (Math.random() * 1e6) | 0;
 
 // 무기 — 수치는 여기 한 곳에만 둔다
 const GUNS = [
-  { k:'pistol', n:'권총',  dmg:22, rate:0.26, mag:12, reload:1.5, kick:0.9, range:55,  spread:0.011, pel:1, auto:0, len:0.26, col:0x6b7078, eff:80, fly:600, lo:0.5 },
-  { k:'smg',    n:'SMG',   dmg:15, rate:0.075,mag:30, reload:1.9, kick:1.2, range:45,  spread:0.024, pel:1, auto:1, len:0.40, col:0x55606a, eff:70, fly:600, lo:0.5 },
-  { k:'rifle',  n:'소총',  dmg:29, rate:0.12, mag:30, reload:2.3, kick:1.6, range:130, spread:0.012, pel:1, auto:1, len:0.62, col:0x4a5a4a, eff:250, fly:600, lo:0.65 },
-  { k:'shot',   n:'샷건',  dmg:13, rate:0.85, mag:6,  reload:2.7, kick:3.0, range:18,  spread:0.060, pel:8, auto:0, len:0.58, col:0x6a523a, fall:1, eff:25, fly:40, lo:0 },
-  { k:'sniper', n:'저격',  dmg:92, rate:1.45, mag:5,  reload:3.0, kick:4.0, range:320, spread:0.002, pel:1, auto:0, len:0.84, col:0x3f4a3f, scope:1, eff:600, fly:600, lo:0.8 },
+  { k:'pistol', n:'권총',  dmg:22, rate:0.26, mag:15, reload:1.5, kick:0.9, range:55,  spread:0.011, pel:1, auto:0, len:0.26, col:0x6b7078, eff:80, fly:600, lo:0.5, am:'9mm' },
+  { k:'smg',    n:'SMG',   dmg:15, rate:0.075,mag:30, reload:1.9, kick:1.2, range:45,  spread:0.024, pel:1, auto:1, len:0.40, col:0x55606a, eff:70, fly:600, lo:0.5, am:'9mm' },
+  { k:'rifle',  n:'소총',  dmg:29, rate:0.12, mag:30, reload:2.3, kick:1.6, range:130, spread:0.012, pel:1, auto:1, len:0.62, col:0x4a5a4a, eff:250, fly:600, lo:0.65, am:'5.56' },
+  { k:'shot',   n:'샷건',  dmg:13, rate:0.85, mag:5,  reload:2.7, kick:3.0, range:18,  spread:0.060, pel:8, auto:0, len:0.58, col:0x6a523a, fall:1, eff:25, fly:40, lo:0, am:'12g' },
+  { k:'sniper', n:'저격',  dmg:92, rate:1.45, mag:5,  reload:3.0, kick:4.0, range:320, spread:0.002, pel:1, auto:0, len:0.84, col:0x3f4a3f, scope:1, eff:600, fly:600, lo:0.8, am:'7.62' },
 ];
 const PARTS = [                   // 맞은 자리 배율
   { y0:1.52, y1:1.80, r:0.17, m:2.0,  t:'헤드샷' },
@@ -268,7 +279,9 @@ function buildProps(){
 }
 
 // ══ 전리품 ════════════════════════════════════════════════════
-const LOOT = { GUN:0, AMMO:1, HEAL:2, HELM:3, VEST:4 };
+const LOOT = { GUN:0, AMMO:1, HEAL:2, HELM:3, VEST:4, BAG:5, BOX:6 };
+const LOOT_COL = [0xffb03a, 0x9fb4c8, 0x6adf8a, 0xc8a2ff, 0x7fd4ff, 0xd8c27a, 0x8a5a2e];
+const LOOT_SPARE = 400;                    // 버린 물건·봇 상자가 들어갈 여유 칸
 const loots = [];
 let lootMesh = null;
 const _m4 = new THREE.Matrix4(), _q0 = new THREE.Quaternion(), _s0 = new THREE.Vector3(1,1,1);
@@ -291,29 +304,45 @@ function buildLoot(){
   }
   spots.forEach((p, i) => {
     const r = rh(i, 41, SEED);
-    let kind, gun = -1, sub = 0;
-    if (r < 0.34) { kind = LOOT.GUN; gun = (rh(i,42,SEED) * GUNS.length) | 0; }
-    else if (r < 0.56) kind = LOOT.AMMO;
-    else if (r < 0.80) { kind = LOOT.HEAL; sub = (rh(i,43,SEED) * 4) | 0; }
-    else if (r < 0.90) { kind = LOOT.HELM; sub = 1 + ((rh(i,44,SEED) * 3) | 0); }
-    else { kind = LOOT.VEST; sub = 1 + ((rh(i,45,SEED) * 3) | 0); }
-    loots.push({ x:p[0], y:p[1], z:p[2], kind, gun, sub, taken:false });
+    let it;
+    if (r < 0.34){ const gi = (rh(i,42,SEED) * GUNS.length) | 0; it = { kind:LOOT.GUN, gun:gi, ld:GUNS[gi].mag }; }   // 탄창 1개분 장전된 채로
+    else if (r < 0.56){                          // 탄은 한 종류만 — 총 스폰 비율대로 (9mm 2/5)
+      const am = GUNS[(rh(i,46,SEED) * GUNS.length) | 0].am;
+      it = { kind:LOOT.AMMO, am, n:AMMO[am].pick };
+    }
+    else if (r < 0.78) it = { kind:LOOT.HEAL, sub:(rh(i,43,SEED) * 4) | 0, n:1 };
+    else if (r < 0.86) it = { kind:LOOT.HELM, sub:1 + ((rh(i,44,SEED) * 3) | 0) };
+    else if (r < 0.94) it = { kind:LOOT.VEST, sub:1 + ((rh(i,45,SEED) * 3) | 0) };
+    else it = { kind:LOOT.BAG, sub:1 + ((rh(i,47,SEED) * 3) | 0) };
+    loots.push(Object.assign(it, { x:p[0], y:p[1], z:p[2], taken:false }));
   });
   const geo = new THREE.BoxGeometry(0.44, 0.3, 0.7);
   const mat = new THREE.MeshStandardMaterial({ vertexColors:true, roughness:0.6, emissiveIntensity:0 });
-  lootMesh = new THREE.InstancedMesh(geo, mat, loots.length);
-  lootMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(loots.length*3), 3);
-  const c = new THREE.Color();
-  loots.forEach((l, i) => {
-    _m4.compose(new THREE.Vector3(l.x, l.y, l.z), _q0, _s0);
-    lootMesh.setMatrixAt(i, _m4);
-    c.set(l.kind === LOOT.GUN ? 0xffb03a : l.kind === LOOT.AMMO ? 0x9fb4c8
-        : l.kind === LOOT.HEAL ? 0x6adf8a
-        : l.kind === LOOT.HELM ? 0xc8a2ff : 0x7fd4ff);
-    lootMesh.setColorAt(i, c);
-  });
+  const cap = loots.length + LOOT_SPARE;
+  lootMesh = new THREE.InstancedMesh(geo, mat, cap);
+  lootMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap*3), 3);
+  for (let i = 0; i < cap; i++){
+    if (i < loots.length) showLoot(i); else { _m4.compose(new THREE.Vector3(0, -9999, 0), _q0, _s0); lootMesh.setMatrixAt(i, _m4); }
+  }
   lootMesh.instanceMatrix.needsUpdate = true;
   scene.add(lootMesh);
+}
+const _lc = new THREE.Color();
+function showLoot(i){
+  const l = loots[i];
+  _m4.compose(new THREE.Vector3(l.x, l.y, l.z), _q0, l.kind === LOOT.BOX ? new THREE.Vector3(1.6, 1.6, 1.2) : _s0);
+  lootMesh.setMatrixAt(i, _m4);
+  lootMesh.setColorAt(i, _lc.set(LOOT_COL[l.kind]));
+  lootMesh.instanceMatrix.needsUpdate = true;
+  if (lootMesh.instanceColor) lootMesh.instanceColor.needsUpdate = true;
+}
+// 새 전리품 (버린 물건·봇 상자). 빈 칸이 없으면 이미 주운 칸을 다시 쓴다
+function addLoot(it, x, y, z){
+  let i = loots.length;
+  if (i >= lootMesh.count){ i = loots.findIndex(l => l.taken); if (i < 0) return null; }
+  loots[i] = Object.assign(it, { x, y, z, taken:false });
+  showLoot(i);
+  return loots[i];
 }
 function hideLoot(i){
   _m4.compose(new THREE.Vector3(0, -9999, 0), _q0, _s0);
@@ -351,17 +380,17 @@ function makeEnts(){
       id:i, bot:i>0, name:i?'봇 '+i:'나', hp:100, alive:true,
       x:sp.x, z:sp.z, y:heightAt(sp.x, sp.z), vy:0, onGround:true,
       yaw:rh(i,1,SEED)*6.28, fall:0,
-      guns:[null,null], slot:0, ammo:[0,0], mags:{},
+      guns:[null,null,null], slot:0, ammo:[0,0,0],   // 0·1 주무기, 2 권총 — 장전 탄은 총마다 따로
+      bag:{ '9mm':0, '5.56':0, '12g':0, '7.62':0 }, bagLv:0,   // 예비탄은 가방에 종류별로
       inv:{ band:2, kit:0, med:0, drink:0 }, healT:0, healKind:null, boost:0,
       helm:0, helmD:0, vest:0, vestD:0, st:0,
       cd:0, reload:0, burst:0, react:0, think:0, tx:0, tz:0, target:null,
       mesh:null, chute:null, kills:0,
       drop:'plane', dropT:0, lx:0, lz:0,
     };
-    for (const g of GUNS) e.mags[g.k] = 0;
     if (e.bot){                                   // 봇은 총 하나와 적당한 장비를 들고 내린다
       const gi = (rh(i,7,SEED+61) * GUNS.length) | 0;
-      e.guns[0] = gi; e.ammo[0] = GUNS[gi].mag; e.mags[GUNS[gi].k] = GUNS[gi].mag * 2;
+      e.guns[0] = gi; e.ammo[0] = GUNS[gi].mag;     // 봇은 아직 탄 무한 — 재장전하면 다시 찬다
       const al = rh(i,8,SEED+62);
       if (al > 0.45){ e.helm = al > 0.85 ? 2 : 1; e.helmD = ARMOR[e.helm].dur; }
       if (al > 0.3){ e.vest = al > 0.8 ? 2 : 1; e.vestD = ARMOR[e.vest].dur; }
@@ -1015,6 +1044,7 @@ function hurt(e, dmg, by, part, gunName){
   if (e.hp <= 0){
     e.alive = false; e.fall = 0;
     e.place = aliveN() + 1;                      // 순위표용 — 남은 사람 수 + 1
+    if (e.bot) deathBox(e);
     if (by){ by.kills++; if (by === me()){ kills++; sKill(); } }
     feed((by===me()?'<s>처치</s> ':(by?tag(by)+' → ':'')) + tag(e)
        + (gunName ? ' <i>['+gunName+']</i>' : '') + (part && part.t ? ' · '+part.t : ''));
@@ -1081,7 +1111,7 @@ function startReload(){
   const p = me(), gi = p.guns[p.slot];
   if (gi === null || p.reload > 0) return;
   const g = GUNS[gi];
-  if (p.ammo[p.slot] >= g.mag || p.mags[g.k] <= 0) return;
+  if (p.ammo[p.slot] >= g.mag || p.bag[g.am] <= 0) return;
   p.reload = g.reload; sRel(); hudGun();
 }
 function swapGun(s){
@@ -1331,6 +1361,112 @@ function useTarget(){
   opts.sort((a,b) => a.d - b.d);
   return opts[0] || null;
 }
+// ── 가방 무게 · 용량
+const bagCap = (p) => BAG_CAP[p.bagLv];
+function bagW(p){
+  let w = 0;
+  for (const k of AMMO_ORDER) w += p.bag[k] * AMMO[k].w;
+  for (const k of HEAL_ORDER) w += p.inv[k] * HEAL_W[k];
+  return w;
+}
+function itemName(it){
+  switch (it.kind){
+    case LOOT.GUN:  return GUNS[it.gun].n + ' (' + it.ld + '발 장전)';
+    case LOOT.AMMO: return AMMO[it.am].n + ' ×' + it.n;
+    case LOOT.HEAL: return HEALS[HEAL_ORDER[it.sub]].n + (it.n > 1 ? ' ×' + it.n : '');
+    case LOOT.HELM: return '헬멧 Lv' + it.sub;
+    case LOOT.VEST: return '방탄복 Lv' + it.sub;
+    case LOOT.BAG:  return '가방 Lv' + it.sub;
+    case LOOT.BOX:  return it.name;
+  }
+  return '?';
+}
+// 발밑에 버린다 (조금 흩어서)
+function dropItem(it){
+  const p = me(), a = Math.random()*6.283, r = 0.5 + Math.random()*0.6;
+  return addLoot(it, p.x + Math.cos(a)*r, p.y + 0.35, p.z + Math.sin(a)*r);
+}
+// 총을 손에 든다. 권총은 3번 칸, 나머지는 1·2번. 칸이 차 있으면 들던 총은 장전 탄째로 발밑에.
+function equipGun(gi, ld){
+  const p = me(), g = GUNS[gi];
+  let sl;
+  if (g.k === 'pistol') sl = 2;
+  else sl = p.guns[0] === null ? 0 : p.guns[1] === null ? 1 : (p.slot < 2 ? p.slot : 0);
+  if (p.guns[sl] !== null) dropItem({ kind:LOOT.GUN, gun:p.guns[sl], ld:p.ammo[sl] });
+  p.guns[sl] = gi; p.ammo[sl] = ld;
+  p.slot = sl; p.reload = 0; setScope(false); buildView();
+}
+// 하나 줍기. null = 다 주웠다 · 'part' = 일부만 (가방이 참) · 그 밖의 글자 = 못 줍는 이유
+function takeItem(it){
+  const p = me(), room = bagCap(p) - bagW(p) + 1e-9;
+  switch (it.kind){
+    case LOOT.GUN:
+      equipGun(it.gun, it.ld); feed('<i>획득</i> ' + GUNS[it.gun].n);
+      return null;
+    case LOOT.AMMO: {
+      const t = Math.min(it.n, Math.floor(room / AMMO[it.am].w));
+      if (t <= 0) return '가방이 가득 찼다 (' + Math.round(bagW(p)) + '/' + bagCap(p) + ')';
+      p.bag[it.am] += t; it.n -= t; feed('<i>획득</i> ' + AMMO[it.am].n + ' ' + t + '발');
+      return it.n > 0 ? 'part' : null;
+    }
+    case LOOT.HEAL: {
+      const k = HEAL_ORDER[it.sub], n = it.n || 1, t = Math.min(n, Math.floor(room / HEAL_W[k]));
+      if (t <= 0) return '가방이 가득 찼다 — ' + HEALS[k].n + ' ' + HEAL_W[k] + ' 필요';
+      p.inv[k] += t; it.n = n - t; feed('<i>획득</i> ' + HEALS[k].n + (t > 1 ? ' ×' + t : ''));
+      return it.n > 0 ? 'part' : null;
+    }
+    case LOOT.HELM:
+      if (it.sub <= p.helm) return '더 좋은 헬멧을 쓰고 있다';
+      if (p.helm) dropItem({ kind:LOOT.HELM, sub:p.helm, dur:p.helmD });
+      p.helm = it.sub; p.helmD = it.dur ?? ARMOR[it.sub].dur; feed('<i>착용</i> 헬멧 Lv' + it.sub);
+      return null;
+    case LOOT.VEST:
+      if (it.sub <= p.vest) return '더 좋은 방탄복을 입고 있다';
+      if (p.vest) dropItem({ kind:LOOT.VEST, sub:p.vest, dur:p.vestD });
+      p.vest = it.sub; p.vestD = it.dur ?? ARMOR[it.sub].dur; feed('<i>착용</i> 방탄복 Lv' + it.sub);
+      return null;
+    case LOOT.BAG:
+      if (it.sub <= p.bagLv) return '더 큰 가방을 메고 있다';
+      if (p.bagLv) dropItem({ kind:LOOT.BAG, sub:p.bagLv });
+      p.bagLv = it.sub; feed('<i>착용</i> 가방 Lv' + it.sub + ' (' + bagCap(p) + ')');
+      return null;
+  }
+  return '못 줍는다';
+}
+// 바닥 전리품 i 줍기 (상자는 인벤토리로 연다)
+function takeLoot(i){
+  const l = loots[i];
+  if (!l || l.taken) return;
+  if (l.kind === LOOT.BOX){ openInv(); return; }
+  const r = takeItem(l);
+  if (r === null){ l.taken = true; hideLoot(i); if (nearLoot === i) nearLoot = -1; sTake(); }
+  else if (r === 'part'){ sTake(); why('가방이 가득 차 일부만 주웠다'); }
+  else why(r);
+  hudGun(); if (invOpen) renderInv();
+}
+// 상자 안의 한 칸 줍기
+function takeFromBox(i, j){
+  const l = loots[i];
+  if (!l || l.taken || l.kind !== LOOT.BOX) return;
+  const it = l.items[j], r = takeItem(it);
+  if (r === null) l.items.splice(j, 1);
+  if (r !== null && r !== 'part') why(r); else sTake();
+  if (r === 'part') why('가방이 가득 차 일부만 주웠다');
+  if (!l.items.length){ l.taken = true; hideLoot(i); }
+  hudGun(); if (invOpen) renderInv();
+}
+// 봇이 죽은 자리에 그 봇의 총·탄·회복템 상자
+function deathBox(e){
+  const items = [];
+  const gi = e.guns[0];
+  if (gi !== null && gi !== undefined){
+    items.push({ kind:LOOT.GUN, gun:gi, ld:e.ammo[0] });
+    items.push({ kind:LOOT.AMMO, am:GUNS[gi].am, n:GUNS[gi].mag * 2 });
+  }
+  HEAL_ORDER.forEach((k, sub) => { if (e.inv[k] > 0) items.push({ kind:LOOT.HEAL, sub, n:e.inv[k] }); });
+  if (!items.length) return;
+  addLoot({ kind:LOOT.BOX, name:e.name + ' 상자', items }, e.x, heightAt(e.x, e.z) + 0.45, e.z);
+}
 function scanLoot(){
   const p = me();
   nearLoot = -1; nearLootD = 1e9;
@@ -1347,12 +1483,9 @@ function scanLoot(){
   if (nearLoot < 0){ promptEl.style.display = 'none'; return; }
   const l = loots[nearLoot];
   promptEl.style.display = 'block';
-  promptEl.querySelector('span').textContent =
-    l.kind === LOOT.GUN  ? GUNS[l.gun].n + ' 줍기'
-    : l.kind === LOOT.AMMO ? '탄약 줍기'
-    : l.kind === LOOT.HEAL ? HEALS[HEAL_ORDER[l.sub]].n + ' 줍기'
-    : l.kind === LOOT.HELM ? '헬멧 Lv'+l.sub+' 착용'
-    : '방탄복 Lv'+l.sub+' 착용';
+  promptEl.querySelector('span').textContent = l.kind === LOOT.BOX ? l.name + ' 열기'
+    : (l.kind === LOOT.HELM || l.kind === LOOT.VEST || l.kind === LOOT.BAG) ? itemName(l) + ' 착용'
+    : itemName(l) + ' 줍기';
 }
 function pickUp(){
   const p = me();
@@ -1361,43 +1494,132 @@ function pickUp(){
   if (!u) return;
   if (u.k === 'car'){ toggleRide(); return; }
   const cc = u.k === 'care' ? u.o : null;
-  if (cc){                                       // 보급 상자 — 저격이 들어 있다
+  if (cc){                                       // 보급 상자 — 저격 · 7.62 · 3레벨 장비 · 구급킷
     cc.taken = true; scene.remove(cc.mesh);
-    const gi = 4;
-    const sl = p.guns[0] === null ? 0 : (p.guns[1] === null ? 1 : p.slot);
-    p.guns[sl] = gi; p.ammo[sl] = GUNS[gi].mag; p.mags[GUNS[gi].k] += GUNS[gi].mag*3;
-    p.slot = sl; p.helm = 3; p.helmD = ARMOR[3].dur; p.vest = 3; p.vestD = ARMOR[3].dur;
-    p.inv.med += 1;
-    setScope(false); buildView();
+    equipGun(4, GUNS[4].mag);
+    for (const it of [{ kind:LOOT.AMMO, am:'7.62', n:15 }, { kind:LOOT.HEAL, sub:2, n:1 }]){
+      const r = takeItem(it);
+      if (r !== null) dropItem(it);              // 가방에 안 들어간 만큼은 발밑에
+    }
+    p.helm = 3; p.helmD = ARMOR[3].dur; p.vest = 3; p.vestD = ARMOR[3].dur;
     feed('<s>보급</s> 저격 · 3레벨 장비'); sTake(); hudGun();
     return;
   }
   if (nearLoot < 0) return;
-  const l = loots[nearLoot];
-  if (l.kind === LOOT.GUN){
-    const g = GUNS[l.gun];
-    let s = p.guns[0] === null ? 0 : (p.guns[1] === null ? 1 : p.slot);
-    p.guns[s] = l.gun; p.ammo[s] = g.mag; p.mags[g.k] += g.mag;
-    p.slot = s; setScope(false); buildView();
-    feed('<i>획득</i> ' + g.n);
-  } else if (l.kind === LOOT.AMMO){
-    for (const g of GUNS) p.mags[g.k] += Math.round(g.mag * 0.8);
-    feed('<i>획득</i> 탄약');
-  } else if (l.kind === LOOT.HEAL){
-    const k = HEAL_ORDER[l.sub], H = HEALS[k];
-    if (p.inv[k] >= H.max){ feed('<i>'+H.n+'은 더 못 든다</i>'); return; }
-    p.inv[k]++; feed('<i>획득</i> ' + H.n);
-  } else if (l.kind === LOOT.HELM){
-    if (l.sub <= p.helm){ feed('<i>더 좋은 헬멧을 쓰고 있다</i>'); return; }
-    p.helm = l.sub; p.helmD = ARMOR[l.sub].dur; feed('<i>착용</i> 헬멧 Lv'+l.sub);
-  } else {
-    if (l.sub <= p.vest){ feed('<i>더 좋은 방탄복을 입고 있다</i>'); return; }
-    p.vest = l.sub; p.vestD = ARMOR[l.sub].dur; feed('<i>착용</i> 방탄복 Lv'+l.sub);
-  }
-  l.taken = true; hideLoot(nearLoot); nearLoot = -1;
+  takeLoot(nearLoot);
   promptEl.style.display = 'none';
-  sTake(); hudGun();
 }
+// ══ 인벤토리 (Tab) ════════════════════════════════════════════
+// 열면 마우스 잠금을 풀고 게임은 계속 간다. 왼쪽 주변(3m) · 가운데 가방 · 오른쪽 장비.
+// 클릭 = 줍기/사용/선택, 우클릭 = 버리기 (탄·회복템은 전부/절반). 목록은 DOM 으로 만든다.
+let invOpen = false, invT = 0;
+const invEl = document.getElementById('inv');
+const invNear = document.getElementById('invNear'), invBag = document.getElementById('invBag'), invEq = document.getElementById('invEq');
+const invW = document.getElementById('invW'), invMenu = document.getElementById('invMenu');
+function openInv(){
+  if (invOpen || !playing || over) return;
+  invOpen = true; invEl.hidden = false; firing = false; setScope(false);
+  pauseEl.hidden = true;                         // 일부러 푼 잠금이다 — '잠금 해제됨' 안내는 안 띄운다
+  if (document.pointerLockElement) document.exitPointerLock();
+  renderInv();
+}
+function closeInv(noLock){
+  if (!invOpen) return;
+  invOpen = false; invEl.hidden = true; invMenu.hidden = true;
+  if (!noLock && playing && !over) lockMouse();
+}
+function el(tag, cls, text){
+  const d = document.createElement(tag);
+  if (cls) d.className = cls;
+  if (text !== undefined) d.textContent = text;
+  return d;
+}
+function row(text, sub, onClick, onRight){
+  const r = el('div', 'row' + (onClick ? ' act' : ''));
+  r.appendChild(el('span', '', text));
+  if (sub) r.appendChild(el('i', '', sub));
+  if (onClick) r.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+  if (onRight) r.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); onRight(e); });
+  return r;
+}
+function menu(e, opts){                          // 우클릭 — 수량 고르기
+  invMenu.replaceChildren(...opts.map(([t, f]) => { const b = el('button', '', t); b.addEventListener('click', (ev) => { ev.stopPropagation(); invMenu.hidden = true; f(); }); return b; }));
+  const box = invEl.getBoundingClientRect();
+  invMenu.style.left = Math.min(e.clientX - box.left, box.width - 130) + 'px';
+  invMenu.style.top = (e.clientY - box.top) + 'px';
+  invMenu.hidden = false;
+}
+function dropAmmo(k, n){
+  const p = me(); n = Math.min(n, p.bag[k]); if (n <= 0) return;
+  p.bag[k] -= n; dropItem({ kind:LOOT.AMMO, am:k, n }); feed('<i>버림</i> ' + AMMO[k].n + ' ' + n + '발');
+  hudGun(); renderInv();
+}
+function dropHeal(k, n){
+  const p = me(); n = Math.min(n, p.inv[k]); if (n <= 0) return;
+  if (p.healKind === k && p.inv[k] - n <= 0){ p.healT = 0; p.healKind = null; }
+  p.inv[k] -= n; dropItem({ kind:LOOT.HEAL, sub:HEAL_ORDER.indexOf(k), n }); feed('<i>버림</i> ' + HEALS[k].n + (n > 1 ? ' ×' + n : ''));
+  hudGun(); renderInv();
+}
+function dropGun(sl){
+  const p = me(); if (p.guns[sl] === null) return;
+  dropItem({ kind:LOOT.GUN, gun:p.guns[sl], ld:p.ammo[sl] }); feed('<i>버림</i> ' + GUNS[p.guns[sl]].n);
+  p.guns[sl] = null; p.ammo[sl] = 0;
+  if (p.slot === sl){ p.reload = 0; const o = [0,1,2].find(i => p.guns[i] !== null); p.slot = o === undefined ? sl : o; setScope(false); buildView(); }
+  hudGun(); renderInv();
+}
+function dropGear(kind){
+  const p = me();
+  if (kind === LOOT.HELM && p.helm){ dropItem({ kind, sub:p.helm, dur:p.helmD }); p.helm = 0; p.helmD = 0; }
+  else if (kind === LOOT.VEST && p.vest){ dropItem({ kind, sub:p.vest, dur:p.vestD }); p.vest = 0; p.vestD = 0; }
+  else if (kind === LOOT.BAG && p.bagLv){
+    if (bagW(p) > BAG_CAP[0]){ why('가방을 벗으면 ' + BAG_CAP[0] + ' 를 넘는다 — 먼저 덜어 내라'); return; }
+    dropItem({ kind, sub:p.bagLv }); p.bagLv = 0;
+  }
+  hudGun(); renderInv();
+}
+const half = (n) => Math.max(1, Math.ceil(n / 2));
+function renderInv(){
+  if (!invOpen) return;
+  const p = me();
+  invW.textContent = '무게 ' + Math.round(bagW(p)) + ' / ' + bagCap(p);
+  // 주변 3m
+  const near = [];
+  loots.forEach((l, i) => {
+    if (l.taken || Math.hypot(l.x-p.x, l.z-p.z) > 3 || Math.abs(l.y-p.y) > 2.5) return;
+    if (l.kind === LOOT.BOX){
+      near.push(el('div', 'grp', l.name));
+      l.items.forEach((it, j) => near.push(row(itemName(it), null, () => takeFromBox(i, j))));
+    } else near.push(row(itemName(l), null, () => takeLoot(i)));
+  });
+  invNear.replaceChildren(...(near.length ? near : [el('div', 'none', '주변에 아무것도 없다')]));
+  // 가방
+  const bag = [];
+  for (const k of AMMO_ORDER) if (p.bag[k] > 0){
+    const n = p.bag[k];
+    bag.push(row(AMMO[k].n, n + '발 · ' + Math.round(n * AMMO[k].w * 10)/10, null,
+      (e) => menu(e, [['전부 버리기 (' + n + ')', () => dropAmmo(k, n)], ['절반 버리기 (' + half(n) + ')', () => dropAmmo(k, half(n))]])));
+  }
+  for (const k of HEAL_ORDER) if (p.inv[k] > 0){
+    const n = p.inv[k];
+    bag.push(row(HEALS[k].n + ' ×' + n, '클릭 사용 · ' + n * HEAL_W[k], () => heal(k),
+      (e) => menu(e, [['전부 버리기 (' + n + ')', () => dropHeal(k, n)], ['절반 버리기 (' + half(n) + ')', () => dropHeal(k, half(n))]])));
+  }
+  invBag.replaceChildren(...(bag.length ? bag : [el('div', 'none', '비었다')]));
+  // 장비
+  const eq = [];
+  ['주무기 1', '주무기 2', '권총'].forEach((t, i) => {
+    const gi = p.guns[i];
+    eq.push(row((i+1) + ' ' + t + ' — ' + (gi === null ? '빈 칸' : GUNS[gi].n), gi === null ? null : p.ammo[i] + '발 · ' + AMMO[GUNS[gi].am].n + (i === p.slot ? ' · 손에' : ''),
+      gi === null ? null : () => { swapGun(i); renderInv(); }, gi === null ? null : () => dropGun(i)));
+  });
+  eq.push(row('헬멧 — ' + (p.helm ? 'Lv' + p.helm : '없음'), p.helm ? '내구 ' + Math.round(p.helmD) : null, null, p.helm ? () => dropGear(LOOT.HELM) : null));
+  eq.push(row('방탄복 — ' + (p.vest ? 'Lv' + p.vest : '없음'), p.vest ? '내구 ' + Math.round(p.vestD) : null, null, p.vest ? () => dropGear(LOOT.VEST) : null));
+  eq.push(row('가방 — ' + (p.bagLv ? 'Lv' + p.bagLv : '없음'), '용량 ' + bagCap(p), null, p.bagLv ? () => dropGear(LOOT.BAG) : null));
+  invEq.replaceChildren(...eq);
+}
+invEl.addEventListener('click', () => { invMenu.hidden = true; });
+invEl.addEventListener('contextmenu', (e) => e.preventDefault());
+
 // 배그처럼 종류별로 올라가는 상한과 시간이 다르다
 function heal(kind){
   const p = me();
@@ -1411,6 +1633,7 @@ function heal(kind){
     else if (p.inv.med > 0) kind = 'med';
   }
   if (!kind || p.inv[kind] <= 0 || p.healT > 0) return;
+  if (invOpen) closeInv();                      // 인벤토리에서 눌렀으면 닫고 쓴다
   const H = HEALS[kind];
   if (H.cap && p.hp >= H.cap) { feed('<i>'+H.n+'으로는 더 못 올린다</i>'); return; }
   p.healT = H.t; p.healKind = kind;
@@ -1454,15 +1677,16 @@ function hudGun(){
   const p = me(), gi = p.guns[p.slot];
   const g = gi !== null ? GUNS[gi] : null;
   gunN.textContent = g ? g.n : '맨손';
-  gunA.innerHTML = g ? (p.ammo[p.slot] + ' <s>/ ' + p.mags[g.k] + '</s>') : '— <s>/ —</s>';
+  gunA.innerHTML = g ? (p.ammo[p.slot] + ' <s>/ ' + AMMO[g.am].n + ' ' + p.bag[g.am] + '</s>') : '— <s>/ —</s>';
   gunR.textContent = p.reload > 0 ? '재장전…' : (p.healT > 0 ? '치료 중…' : '');
-  const slots = [0,1].map(i => {
+  const slots = [0,1,2].map(i => {
     const q = p.guns[i];
     return (i===p.slot ? '<b>' : '') + (i+1) + ' ' + (q===null ? '빈 칸' : GUNS[q].n) + (i===p.slot ? '</b>' : '');
   }).join('   ');
   const arm = '헬멧 ' + (p.helm ? '<b>Lv'+p.helm+'</b>' : '—')
             + '  방탄 ' + (p.vest ? '<b>Lv'+p.vest+'</b>' : '—');
-  const inv = '붕대 <b>'+p.inv.band+'</b> 상자 <b>'+p.inv.kit+'</b> 킷 <b>'+p.inv.med+'</b> 드링크 <b>'+p.inv.drink+'</b>';
+  const inv = '붕대 <b>'+p.inv.band+'</b> 상자 <b>'+p.inv.kit+'</b> 킷 <b>'+p.inv.med+'</b> 드링크 <b>'+p.inv.drink+'</b>'
+            + '  가방 ' + (p.bagLv ? 'Lv'+p.bagLv : '—') + ' <b>' + Math.round(bagW(p)) + '/' + bagCap(p) + '</b>';
   gunS.innerHTML = slots + '<br>' + arm + '<br>' + inv;
   hpFill.style.width = Math.max(0, p.hp) + '%';
   hpBar.classList.toggle('low', p.hp < 35);
@@ -1541,6 +1765,7 @@ function finish(won){
   st.textContent = '처치 ' + kills + '   ·   명중률 '
     + (shots ? Math.round(hits/shots*100) : 0) + '%   ·   발사 ' + shots + '발';
   playBtn.textContent = '다시 한 판';
+  if (invOpen) closeInv(true);
   pauseEl.hidden = true;
   playBtn.disabled = false;
   veil.hidden = false;
@@ -1550,8 +1775,10 @@ function finish(won){
 // ══ 입력 ══════════════════════════════════════════════════════
 addEventListener('keydown', (e) => {
   keys[e.code] = true;
-  if (e.code === 'Space') e.preventDefault();
-  if (!playing || !locked) return;
+  if (e.code === 'Space' || e.code === 'Tab') e.preventDefault();
+  if (playing && !over && e.code === 'Tab' && !e.repeat){ invOpen ? closeInv() : openInv(); return; }
+  if (invOpen && e.code === 'Escape'){ closeInv(); return; }
+  if (!playing || !(locked || invOpen)) return;   // 인벤토리를 연 동안에도 줍기·회복·무기 교체는 된다
   if (e.code === 'KeyR') startReload();
   if (e.code === 'KeyE') pickUp();
   if (e.code === 'KeyF') heal();
@@ -1559,10 +1786,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyZ') setStance(2);
   if (e.code === 'Digit1') swapGun(0);
   if (e.code === 'Digit2') swapGun(1);
-  if (e.code === 'Digit3') heal('band');
-  if (e.code === 'Digit4') heal('kit');
-  if (e.code === 'Digit5') heal('med');
-  if (e.code === 'Digit6') heal('drink');
+  if (e.code === 'Digit3') swapGun(2);          // 3 = 권총 (예전 3~6 회복 단축키는 없앴다 — F 와 인벤토리 클릭)
 });
 addEventListener('keyup', (e) => { keys[e.code] = false; });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; firing = false; });
@@ -1577,10 +1801,10 @@ document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === canvas;
   if (!locked){ firing = false; for (const k in keys) keys[k] = false; }
   // 잠금이 풀리면 무방비다 — 게임은 안 멈추니 그걸 분명히 알린다
-  pauseEl.hidden = locked || !playing || over;
+  pauseEl.hidden = locked || !playing || over || invOpen;
 });
 pauseEl.addEventListener('click', () => { if (playing && !over) lockMouse(); });
-document.addEventListener('pointerlockerror', () => { if (playing && !over) pauseEl.hidden = false; });
+document.addEventListener('pointerlockerror', () => { if (playing && !over && !invOpen) pauseEl.hidden = false; });
 let whyTimer = 0;
 function why(msg){                               // 못 쏘는 이유를 화면 가운데 잠깐
   whyEl.textContent = msg; whyEl.hidden = false;
@@ -1593,7 +1817,7 @@ function cantShoot(){
   if (gi === null) return '총이 없다';
   if (p.healT > 0) return '치료 중';
   if (p.reload > 0) return '재장전 중';
-  if (p.ammo[p.slot] <= 0 && p.mags[GUNS[gi].k] <= 0) return '탄약 없음';
+  if (p.ammo[p.slot] <= 0 && p.bag[GUNS[gi].am] <= 0) return '탄약 없음 — ' + AMMO[GUNS[gi].am].n;
   return null;
 }
 canvas.addEventListener('mousedown', (e) => {
@@ -1651,7 +1875,7 @@ function frame(now){
       updateRed(dt); updateCares(dt);
     }
     updateCars(dt);                              // 지프는 내가 내렸으면 바로 몬다
-    if (!riding && locked) movePlayer(dt);
+    if (!riding && (locked || invOpen)) movePlayer(dt);   // 인벤토리를 열어도 걸을 수 있다
     const p = me();
     // 치료
     if (p.healT > 0){
@@ -1668,8 +1892,8 @@ function frame(now){
       p.reload -= dt;
       if (p.reload <= 0){
         const g = GUNS[p.guns[p.slot]];
-        const need = g.mag - p.ammo[p.slot], take = Math.min(need, p.mags[g.k]);
-        p.ammo[p.slot] += take; p.mags[g.k] -= take; hudGun();
+        const need = g.mag - p.ammo[p.slot], take = Math.min(need, p.bag[g.am]);
+        p.ammo[p.slot] += take; p.bag[g.am] -= take; hudGun();
       }
     }
     if (firing && locked) myShoot();
@@ -1699,6 +1923,7 @@ function frame(now){
     if (live) updateZone(dt);
     zoneFx.style.opacity = live && outOfZone(me()) ? '1' : '0';
     scanLoot();
+    if (invOpen && (invT -= dt) <= 0){ invT = 0.25; if (invMenu.hidden) renderInv(); }
     if (hitT > 0){
       hitT -= dt;
       hitEl.style.opacity = String(Math.max(0, hitT/0.13));

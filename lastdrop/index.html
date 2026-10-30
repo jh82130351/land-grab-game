@@ -57,6 +57,25 @@ body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
 #hit i:first-child{transform:rotate(45deg)} #hit i:last-child{transform:rotate(-45deg)}
 #why{position:absolute;top:calc(50% + 74px);left:50%;transform:translateX(-50%);white-space:nowrap;
   font-family:var(--f-mono);font-size:12.5px;color:var(--red);background:var(--panel);border:1px solid var(--line);padding:5px 10px}
+#inv{position:absolute;inset:0;z-index:6;background:rgba(10,13,16,.86);display:flex;flex-direction:column;
+  padding:14px max(16px,env(safe-area-inset-left,0px));font-family:var(--f-mono);font-size:12.5px}
+#inv .ih{display:flex;gap:14px;align-items:baseline;flex-wrap:wrap;margin-bottom:10px}
+#inv .ih b{color:var(--amber);font-family:var(--f-dis);font-size:16px}
+#inv .ih .k{color:var(--dim);font-size:11.5px;margin-left:auto}
+#inv .ic{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;min-height:0;flex:1}
+#inv section{background:var(--panel);border:1px solid var(--line);padding:8px;overflow:auto;min-height:0}
+#inv h3{margin:0 0 6px;font-size:12px;color:var(--dim);font-weight:400;letter-spacing:.06em}
+#inv .row{display:flex;gap:8px;justify-content:space-between;padding:5px 6px;border-bottom:1px solid rgba(255,255,255,.04)}
+#inv .row i{font-style:normal;color:var(--dim);white-space:nowrap}
+#inv .row.act{cursor:pointer}
+#inv .row:hover{background:rgba(255,157,46,.08)}
+#inv .grp{color:var(--amber);padding:6px 6px 2px}
+#inv .none{color:var(--dim);padding:6px}
+#invMenu{position:absolute;z-index:7;display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--amber)}
+#invMenu button{font:inherit;color:var(--ink);background:none;border:0;padding:7px 12px;text-align:left;cursor:pointer}
+#invMenu button:hover{background:rgba(255,157,46,.15)}
+@media (max-width:640px){#inv .ic{grid-template-columns:1fr}}
+#why{z-index:8}
 #pause{position:absolute;inset:0;z-index:5;display:grid;place-items:center;background:rgba(10,13,16,.55);cursor:pointer;text-align:center}
 #pause>div{background:var(--panel);border:1px solid var(--line);padding:18px 24px;max-width:min(360px,calc(100% - 32px))}
 #pause b{color:var(--amber);font-size:16px}
@@ -135,6 +154,15 @@ body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
   <div id="zonefx"></div>
   <div id="scope"></div>
 
+  <div id="inv" hidden>
+    <div class="ih"><b>인벤토리</b><span id="invW"></span><span class="k">Tab 닫기 · 클릭 줍기·사용·선택 · 우클릭 버리기 · 게임은 계속 진행</span></div>
+    <div class="ic">
+      <section><h3>주변 3m</h3><div id="invNear"></div></section>
+      <section><h3>가방</h3><div id="invBag"></div></section>
+      <section><h3>장비</h3><div id="invEq"></div></section>
+    </div>
+    <div id="invMenu" hidden></div>
+  </div>
   <div id="pause" hidden>
     <div><b>마우스 잠금 해제됨</b>
       <p>적은 계속 움직입니다 — 게임은 멈추지 않습니다.</p>
@@ -182,9 +210,9 @@ body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
         <dt>C / Z</dt><dd>앉기 / 엎드리기 — 느려지지만 잘 맞는다</dd>
         <dt>좌 · 우클릭</dt><dd>발사 · 정조준 (저격은 배율)</dd>
         <dt>E</dt><dd>줍기 · 지프 탑승 · 보급 상자</dd>
-        <dt>R / 1 2</dt><dd>재장전 / 무기 교체</dd>
-        <dt>3 4 5 6</dt><dd>붕대 · 구급상자 · 구급킷 · 드링크</dd>
-        <dt>F</dt><dd>알아서 적당한 회복품 사용</dd>
+        <dt>R / 1 2 3</dt><dd>재장전 / 주무기 1·2 · 권총</dd>
+        <dt>Tab</dt><dd>인벤토리 — 주변·가방·장비, 우클릭 버리기</dd>
+        <dt>F</dt><dd>알아서 적당한 회복품 사용 (인벤토리에서 클릭도)</dd>
       </dl>
       <button class="go" id="play" disabled>섬 만드는 중…</button>
       <div id="rank" hidden></div>
