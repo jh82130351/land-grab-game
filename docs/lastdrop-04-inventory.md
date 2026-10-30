@@ -104,7 +104,7 @@ BR_SRC=~/battle-royale ./deploy.sh
 `node --check lastdrop/game.js` 통과.
 
 ## 새 커밋 해시
-(커밋 후 기록)
+e004f84 — feat(lastdrop-04) 본 커밋
 
 ## 감독 확인 요청 사항 / 남은 이슈
 - 실브라우저(정현): Tab 열고 닫을 때 마우스 재잠금 — 브라우저가 키 입력으로 다시 잠그는 걸 거부하면 '클릭해서 재개' 안내가 뜬다. 헤드리스는 포인터 락을 못 잰다.
