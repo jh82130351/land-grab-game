@@ -104,6 +104,12 @@ body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
 #rank{font-family:var(--f-mono);font-size:15px;color:var(--amber)}
 #rank u{text-decoration:none;font-size:38px;color:#fff;display:block;line-height:1.1}
 #stats{font-family:var(--f-mono);font-size:12px;color:var(--dim);line-height:1.8}
+#board{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:2px 14px;
+  font-family:var(--f-mono);font-size:11.5px;color:var(--dim);max-height:30vh;overflow:auto;margin-top:8px}
+#board div{display:flex;gap:8px;white-space:nowrap}
+#board b{color:var(--amber);font-weight:400;min-width:34px}
+#board i{font-style:normal;margin-left:auto}
+#board .me{color:var(--ink)}
 /* 좁은 화면 — 계기판을 줄여 겹치지 않게 */
 @media (max-width:540px){
   #map{width:92px;height:92px}
@@ -169,6 +175,7 @@ body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
       <button class="go" id="play" disabled>섬 만드는 중…</button>
       <div id="rank" hidden></div>
       <div id="stats" hidden></div>
+      <div id="board" hidden></div>
       <p class="note"><b style="color:#ff9d2e">마우스와 키보드가 필요합니다</b> — 화면 잠금(포인터 락)으로 조준하는 방식이라
         휴대폰에서는 조작되지 않습니다. 혼자 돌아가는 오프라인 한 판이고, 텍스처 이미지 없이 형태와 색으로만
         만들었습니다. 소리도 전부 합성음입니다.</p>

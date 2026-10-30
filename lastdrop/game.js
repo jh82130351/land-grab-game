@@ -28,6 +28,24 @@ const HEALS = {
   drink: { n:'에너지드링크', t:3.0, boost:28, max:6 },
 };
 const HEAL_ORDER = ['band','kit','med','drink'];
+// 봇 난이도 — 봇마다 따로 추첨한다. 플레이 중엔 숨기고 킬피드·순위표에만 보인다 (lastdrop-01 문서)
+//   react 표적을 잡고 첫 발까지(초) · sp 퍼짐 배수 · sight 시야(m) · rest 연사 뒤 쉼(초)
+//   aim 거리 1m 당 조준 오차(m) · move 움직임 단계 · head 머리를 노리는 비율
+const TIERS = [
+  { n:'아주 쉬움',   p:0.015, react:[2.0,3.0],  sp:8.0, sight:35, rest:[2.5,4.0], aim:0.060, move:0, head:0 },
+  { n:'쉬움',        p:0.100, react:[1.4,2.4],  sp:6.0, sight:45, rest:[1.8,3.0], aim:0.045, move:1, head:0 },
+  { n:'보통',        p:0.700, react:[1.0,1.9],  sp:4.5, sight:55, rest:[1.3,2.5], aim:0.032, move:2, head:0 },
+  { n:'약간 어려움', p:0.120, react:[0.7,1.4],  sp:3.4, sight:65, rest:[1.0,2.0], aim:0.022, move:3, head:0 },
+  { n:'어려움',      p:0.060, react:[0.45,0.9], sp:2.4, sight:80, rest:[0.6,1.4], aim:0.014, move:4, head:0 },
+  { n:'하드코어',    p:0.005, react:[0.25,0.5], sp:1.6, sight:95, rest:[0.3,0.8], aim:0.008, move:5, head:0.3 },
+];
+function pickTier(u){
+  let a = 0;
+  for (let i=0;i<TIERS.length;i++){ a += TIERS[i].p; if (u < a) return i; }
+  return 2;
+}
+const rnd = (r) => r[0] + Math.random()*(r[1]-r[0]);
+const tag = (e) => e.bot ? e.name + ' (' + TIERS[e.tier].n + ')' : e.name;
 const SEED = (Math.random() * 1e6) | 0;
 
 // 무기 — 수치는 여기 한 곳에만 둔다
@@ -348,6 +366,7 @@ function makeEnts(){
       if (al > 0.45){ e.helm = al > 0.85 ? 2 : 1; e.helmD = ARMOR[e.helm].dur; }
       if (al > 0.3){ e.vest = al > 0.8 ? 2 : 1; e.vestD = ARMOR[e.vest].dur; }
       e.inv.kit = 1;
+      e.tier = pickTier(rh(i,9,SEED+63));
       e.mesh = new THREE.Mesh(botGeo, BOT_MAT);
       scene.add(e.mesh);
     }
@@ -881,8 +900,9 @@ function hurt(e, dmg, by, part, gunName){
   }
   if (e.hp <= 0){
     e.alive = false; e.fall = 0;
+    e.place = aliveN() + 1;                      // 순위표용 — 남은 사람 수 + 1
     if (by){ by.kills++; if (by === me()){ kills++; sKill(); } }
-    feed((by===me()?'<s>처치</s> ':(by?by.name+' → ':'')) + e.name
+    feed((by===me()?'<s>처치</s> ':(by?tag(by)+' → ':'')) + tag(e)
        + (gunName ? ' <i>['+gunName+']</i>' : '') + (part && part.t ? ' · '+part.t : ''));
     if (e === me()) finish();
     else checkWin();
@@ -897,11 +917,11 @@ function fireFrom(e, dirX, dirY, dirZ){
   sShot(g, far);
   for (let p=0; p<g.pel; p++){
     let dx=dirX, dy=dirY, dz=dirZ;
-    // 봇은 사람보다 훨씬 못 맞힌다. 안 그러면 12명이 15초 만에 전멸한다.
-    const dist = e===me() ? 0 : Math.hypot(dirX, dirZ) * 0 + 1;
+    // 봇은 사람보다 훨씬 못 맞힌다. 얼마나 못 맞히는지는 난이도(TIERS)가 정한다.
     const stm = STANCE[e.st].spread;
     const sp = e===me() ? g.spread * (1 + bloom*1.7) * (scoped?0.3:1) * stm
-                        : (g.spread * 3.4 + 0.006) * stm;
+                        : (g.spread * TIERS[e.tier].sp + 0.006) * stm
+                          * (e.fresh > 0 && e.tier <= 2 ? 1.5 : 1);   // 보통 이하는 처음 2발이 더 퍼진다
     const a = Math.random()*6.283, r = Math.sqrt(Math.random())*sp;
     const sx = -dz, sz = dx, sl = Math.hypot(sx,sz) || 1;
     dx += (sx/sl)*Math.cos(a)*r; dz += (sz/sl)*Math.cos(a)*r; dy += Math.sin(a)*r;
@@ -988,13 +1008,18 @@ function buildView(){
 // ══ 봇 ════════════════════════════════════════════════════════
 function botThink(b){
   b.think = 0.35 + Math.random()*0.4;
+  const T = TIERS[b.tier];
   let best = null, bd = 1e9;
   for (const o of ents){
     if (o === b || !o.alive || o.drop !== 'ground') continue;   // 아직 공중에 있는 사람은 안 노린다
     const d = Math.hypot(o.x-b.x, o.z-b.z);
-    if (d < bd && d < 70 && canSee(b, o)){ bd = d; best = o; }
+    if (d < bd && d < T.sight && canSee(b, o)){ bd = d; best = o; }
   }
-  if (best && best !== b.target) b.react = 0.7 + Math.random()*1.1;   // 보자마자 쏘지는 않는다
+  if (best && best !== b.target){                // 보자마자 쏘지는 않는다
+    b.react = rnd(T.react);
+    b.fresh = 2;                                 // 새 표적의 처음 2발
+    rollAim(b);
+  }
   b.target = best;
   if (!best){                                  // 적이 안 보이면 자기장 안쪽으로
     const d = Math.hypot(b.x-zone.cx, b.z-zone.cz);
@@ -1007,41 +1032,107 @@ function botThink(b){
     }
   }
 }
+function rollAim(b){                             // 연사 한 번마다 조준점이 이만큼 빗나가 있다 (-1~1, 거리 곱)
+  b.aimX = Math.random()*2 - 1; b.aimY = Math.random()*2 - 1;
+  b.aimHead = Math.random() < TIERS[b.tier].head;
+}
+function findCover(b, t){                        // 표적 눈높이에서 안 보이는 5m 안쪽 자리
+  const ty = t.y + 1.5;
+  for (let i = 0; i < 12; i++){
+    const a = Math.random()*6.283, r = 3 + Math.random()*3;
+    const x = b.x + Math.sin(a)*r, z = b.z + Math.cos(a)*r, y = heightAt(x, z) + 1.2;
+    if (blocked(x, y-1.2, z, BODY_R)) continue;
+    const dx = x-t.x, dy = y-ty, dz = z-t.z, L = Math.hypot(dx,dy,dz);
+    if (rayWorld(t.x, ty, t.z, dx/L, dy/L, dz/L, L) < L - 0.6){ b.cx = x; b.cz = z; b.coverT = 2.5; return true; }
+  }
+  return false;
+}
+function botHeal(b, dt){                         // 어려움 이상 — 안 보일 때 피를 채운다
+  if (b.healT > 0){
+    b.healT -= dt;
+    if (b.healT <= 0 && b.healKind){
+      const H = HEALS[b.healKind];
+      b.inv[b.healKind]--; b.hp = Math.min(H.cap, b.hp + H.hp); b.healKind = null;
+    }
+    return true;
+  }
+  if (b.hp >= 60) return false;
+  const safe = !b.target || !b.target.alive || !canSee(b.target, b);
+  if (!safe) return false;
+  const kind = b.inv.kit > 0 && b.hp < 75 ? 'kit' : (b.inv.band > 0 ? 'band' : null);
+  if (!kind) return false;
+  b.healKind = kind; b.healT = HEALS[kind].t;
+  return true;
+}
 function updateBot(b, dt){
   if (b.drop !== 'ground') return;
+  const T = TIERS[b.tier];
   b.st = (b.target && b.target.alive
           && Math.hypot(b.target.x-b.x, b.target.z-b.z) < 42) ? 1 : 0;
   b.think -= dt;
   if (b.think <= 0) botThink(b);
   const gi = b.guns[b.slot], g = gi !== null ? GUNS[gi] : null;
   let mx = 0, mz = 0, run = false;
-  if (b.target && b.target.alive){
+  if (b.cd > 0) b.cd -= dt;
+  if (b.reload > 0){ b.reload -= dt; if (b.reload <= 0 && g){ b.ammo[b.slot] = g.mag; } }
+  if (T.move >= 4 && botHeal(b, dt)){           // 회복 중엔 앉아서 멈춘다
+    b.st = 1;
+    if (b.mesh) b.y = heightAt(b.x, b.z);
+    return;
+  }
+  if (b.coverT > 0){                             // 하드코어 — 장전·빈사 때 엄폐로 뛴다
+    b.coverT -= dt;
+    const dx = b.cx-b.x, dz = b.cz-b.z, d = Math.hypot(dx,dz);
+    if (d > 0.8){ mx = dx/d; mz = dz/d; run = true; } else b.st = 1;
+    if (b.target) b.yaw = Math.atan2(b.target.x-b.x, b.target.z-b.z);
+  } else if (b.target && b.target.alive){
     const d = Math.hypot(b.target.x-b.x, b.target.z-b.z);
     b.yaw = Math.atan2(b.target.x-b.x, b.target.z-b.z);
     const want = g ? Math.min(g.range*0.55, 26) : 8;
-    if (d > want){ mx = Math.sin(b.yaw); mz = Math.cos(b.yaw); run = d > want*1.6; }
-    else if (d < want*0.5){ mx = -Math.sin(b.yaw); mz = -Math.cos(b.yaw); }
-    else { mx = Math.cos(b.yaw)*(b.id%2?1:-1)*0.8; mz = -Math.sin(b.yaw)*(b.id%2?1:-1)*0.8; }
+    const fx = Math.sin(b.yaw), fz = Math.cos(b.yaw);
+    if (b.strafeT === undefined || (b.strafeT -= dt) <= 0){   // 좌우 무빙 방향을 가끔 바꾼다
+      b.strafeT = T.move >= 4 ? 0.7 + Math.random()*0.8 : 1e9;
+      b.side = T.move >= 4 ? (Math.random() < 0.5 ? 1 : -1) : (b.id%2 ? 1 : -1);
+    }
+    const sideAmp = [0, 0, 0.5, 0.8, 1, 1][T.move];
+    if (T.move === 0){                           // 아주 쉬움 — 거의 제자리
+      if (d > want*1.8){ mx = fx*0.5; mz = fz*0.5; }
+    } else if (T.move === 1){                    // 쉬움 — 다가가기만 한다
+      if (d > want){ mx = fx; mz = fz; run = d > want*1.6; }
+    } else {
+      if (d > want){ mx = fx; mz = fz; run = d > want*1.6; }
+      else if (d < want*0.5){ mx = -fx; mz = -fz; }
+      else { mx = fz*b.side*sideAmp; mz = -fx*b.side*sideAmp; }
+      if (T.move >= 4 && d <= want) { mx += fz*b.side*0.6; mz += -fx*b.side*0.6; }
+    }
     // 사격
     if (b.react > 0) b.react -= dt;
     if (g && b.react <= 0 && b.cd <= 0 && b.reload <= 0 && d < g.range*1.1 && canSee(b, b.target)){
-      if (b.ammo[b.slot] <= 0){ b.reload = g.reload; }
-      else {
+      if (b.ammo[b.slot] <= 0){
+        b.reload = g.reload;
+        if (T.move >= 5) findCover(b, b.target);
+      } else {
         b.ammo[b.slot]--;
-        b.cd = g.rate * (g.auto ? 1 : 1.3) + (b.burst-- > 0 ? 0 : 1.0 + Math.random()*1.4);
-        if (b.burst <= 0) b.burst = 2 + ((Math.random()*4)|0);
-        const ty = b.target.y + 1.1 + (Math.random()-0.5)*0.5;
-        let dx = b.target.x - b.x, dy = ty - (b.y+1.52), dz = b.target.z - b.z;
-        const L = Math.hypot(dx,dy,dz);
+        b.cd = g.rate * (g.auto ? 1 : 1.3) + (b.burst-- > 0 ? 0 : rnd(T.rest));
+        if (b.burst <= 0){ b.burst = 2 + ((Math.random()*4)|0); rollAim(b); }
+        const t = b.target, sh = STANCE[t.st].h;
+        // 조준점 — 몸통(하드코어는 가끔 머리) + 거리에 비례한 가로·세로 오차
+        const ty = t.y + (b.aimHead ? 1.66 : 1.15)*sh + (Math.random()-0.5)*0.5 + b.aimY*d*T.aim;
+        let dx = t.x - b.x, dz = t.z - b.z;
+        const hl = Math.hypot(dx, dz) || 1, ox = b.aimX*d*T.aim;
+        const px = -dz/hl, pz = dx/hl;          // 표적을 보는 방향의 옆
+        dx += px*ox; dz += pz*ox;
+        const dy = ty - (b.y+1.52), L = Math.hypot(dx,dy,dz);
         fireFrom(b, dx/L, dy/L, dz/L);
+        if (b.fresh > 0) b.fresh--;
       }
     }
+    if (T.move >= 5 && b.hp < 40 && !(b.coverT > 0) && Math.random() < dt) findCover(b, b.target);
   } else {
     const dx = b.tx-b.x, dz = b.tz-b.z, d = Math.hypot(dx,dz);
     if (d > 1.5){ mx = dx/d; mz = dz/d; b.yaw = Math.atan2(dx,dz); run = outOfZone(b); }
   }
-  if (b.cd > 0) b.cd -= dt;
-  if (b.reload > 0){ b.reload -= dt; if (b.reload <= 0 && g){ b.ammo[b.slot] = g.mag; } }
+  const ml = Math.hypot(mx, mz); if (ml > 1){ mx /= ml; mz /= ml; }
   const sp = (run ? 7.4 : 4.3) * dt;
   if (b.detourT > 0){                          // 우회 중 — 정한 방향으로 잠깐 돌아간다
     b.detourT -= dt;
@@ -1308,7 +1399,14 @@ function finish(won){
   document.querySelector('.keys').hidden = true;
   const rk = document.getElementById('rank'), st = document.getElementById('stats');
   rk.hidden = false; st.hidden = false;
-  rk.innerHTML = won ? '<u>승리</u>최후의 1인' : '<u>#' + placed + '</u>12명 중';
+  rk.innerHTML = won ? '<u>승리</u>최후의 1인' : '<u>#' + placed + '</u>' + N_ENT + '명 중';
+  if (won) me().place = 1;
+  // 순위표 — 난이도는 여기서 처음 보인다. 내가 먼저 죽으면 남은 봇은 '생존'
+  const rows = ents.slice().sort((a,b) => (a.place||0) - (b.place||0));
+  const bd = document.getElementById('board');
+  bd.hidden = false;
+  bd.innerHTML = rows.map(e => '<div' + (e === me() ? ' class="me"' : '') + '><b>'
+    + (e.place ? '#' + e.place : '생존') + '</b>' + tag(e) + '<i>' + e.kills + '킬</i></div>').join('');
   st.textContent = '처치 ' + kills + '   ·   명중률 '
     + (shots ? Math.round(hits/shots*100) : 0) + '%   ·   발사 ' + shots + '발';
   playBtn.textContent = '다시 한 판';
