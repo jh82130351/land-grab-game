@@ -50,11 +50,11 @@ const SEED = (Math.random() * 1e6) | 0;
 
 // 무기 — 수치는 여기 한 곳에만 둔다
 const GUNS = [
-  { k:'pistol', n:'권총',  dmg:22, rate:0.26, mag:12, reload:1.5, kick:0.9, range:55,  spread:0.011, pel:1, auto:0, len:0.26, col:0x6b7078 },
-  { k:'smg',    n:'SMG',   dmg:15, rate:0.075,mag:30, reload:1.9, kick:1.2, range:45,  spread:0.024, pel:1, auto:1, len:0.40, col:0x55606a },
-  { k:'rifle',  n:'소총',  dmg:29, rate:0.12, mag:30, reload:2.3, kick:1.6, range:130, spread:0.012, pel:1, auto:1, len:0.62, col:0x4a5a4a },
-  { k:'shot',   n:'샷건',  dmg:13, rate:0.85, mag:6,  reload:2.7, kick:3.0, range:18,  spread:0.060, pel:8, auto:0, len:0.58, col:0x6a523a, fall:1 },
-  { k:'sniper', n:'저격',  dmg:92, rate:1.45, mag:5,  reload:3.0, kick:4.0, range:320, spread:0.002, pel:1, auto:0, len:0.84, col:0x3f4a3f, scope:1 },
+  { k:'pistol', n:'권총',  dmg:22, rate:0.26, mag:12, reload:1.5, kick:0.9, range:55,  spread:0.011, pel:1, auto:0, len:0.26, col:0x6b7078, eff:80, fly:600, lo:0.5 },
+  { k:'smg',    n:'SMG',   dmg:15, rate:0.075,mag:30, reload:1.9, kick:1.2, range:45,  spread:0.024, pel:1, auto:1, len:0.40, col:0x55606a, eff:70, fly:600, lo:0.5 },
+  { k:'rifle',  n:'소총',  dmg:29, rate:0.12, mag:30, reload:2.3, kick:1.6, range:130, spread:0.012, pel:1, auto:1, len:0.62, col:0x4a5a4a, eff:250, fly:600, lo:0.65 },
+  { k:'shot',   n:'샷건',  dmg:13, rate:0.85, mag:6,  reload:2.7, kick:3.0, range:18,  spread:0.060, pel:8, auto:0, len:0.58, col:0x6a523a, fall:1, eff:25, fly:40, lo:0 },
+  { k:'sniper', n:'저격',  dmg:92, rate:1.45, mag:5,  reload:3.0, kick:4.0, range:320, spread:0.002, pel:1, auto:0, len:0.84, col:0x3f4a3f, scope:1, eff:600, fly:600, lo:0.8 },
 ];
 const PARTS = [                   // 맞은 자리 배율
   { y0:1.52, y1:1.80, r:0.17, m:2.0,  t:'헤드샷' },
@@ -842,7 +842,7 @@ function rayWorld(ox,oy,oz,dx,dy,dz,maxT){
 function rayEnts(ox,oy,oz,dx,dy,dz,maxT,skip){
   let hit = null, best = maxT;
   for (const e of ents){
-    if (!e.alive || e === skip) continue;
+    if (!e.alive || e === skip || e.drop === 'plane') continue;   // 비행기 안은 못 맞힌다
     if (Math.hypot(e.x-ox, e.z-oz) > best + 3) continue;
     for (const p of PARTS){
       let t0=0, t1=best;
@@ -871,13 +871,21 @@ function canSee(a, b){
 // ══ 전투 ══════════════════════════════════════════════════════
 let kills = 0, placed = 0, shots = 0, hits = 0, bloom = 0, scoped = false;
 let kickP = 0, kickY = 0, hitT = 0;
+// eff 까지 100%. 그 뒤 eff 만큼 더 가는 동안 lo 까지 완만히 내려가고 거기서 멈춘다.
+// 샷건만 예전 방식(유효사거리 안에서 1→0.4, 넘으면 0 으로) — 기준 거리만 eff(25m).
+// g.range 는 봇이 어디서 싸울지 정하는 데만 쓴다 (난이도 작업에서 손댄다).
 function rangeMul(g, d){
-  if (d <= g.range) return g.fall ? 1 - (d/g.range)*0.6 : 1;
-  const o = (d - g.range) / (g.range*0.35);
-  return o >= 1 ? 0 : (g.fall ? 0.4 : 1) * (1 - o);
+  if (g.fall){
+    if (d <= g.eff) return 1 - (d/g.eff)*0.6;
+    const o = (d - g.eff) / (g.eff*0.35);
+    return o >= 1 ? 0 : 0.4 * (1 - o);
+  }
+  if (d <= g.eff) return 1;
+  return Math.max(g.lo, 1 - (1 - g.lo) * (d - g.eff) / g.eff);
 }
+let hurtFxAt = 0;
 function hurt(e, dmg, by, part, gunName){
-  if (!e.alive || e.drop !== 'ground') return;
+  if (!e.alive || e.drop === 'plane') return false;   // 낙하산 중에도 맞는다 (배그식)
   // 방어구 — 머리는 헬멧, 몸은 방탄복이 깎아 주고 그만큼 내구도가 닳는다
   const head = part && part.m >= 2;
   if (head && e.helm && e.helmD > 0){
@@ -892,8 +900,9 @@ function hurt(e, dmg, by, part, gunName){
     if (e.vestD <= 0){ e.vest = 0; if (e === me()) feed('<i>방탄복 파괴</i>'); }
   }
   e.hp -= dmg;
-  if (e.healT > 0){ e.healT = 0; e.healKind = null; }
-  if (e === me()){
+  if (by && e.healT > 0){ e.healT = 0; e.healKind = null; }   // 자기장·레드존(by 없음)은 치료를 안 끊는다
+  if (e === me() && performance.now() - hurtFxAt > 300){      // 붉은 화면·소리는 0.3초에 한 번
+    hurtFxAt = performance.now();
     dmgEl.style.opacity = '1';
     setTimeout(()=>{ dmgEl.style.opacity = '0'; }, 110);
     sHurt();
@@ -907,12 +916,18 @@ function hurt(e, dmg, by, part, gunName){
     if (e === me()) finish();
     else checkWin();
   }
+  return true;
 }
+
 function fireFrom(e, dirX, dirY, dirZ){
   const gi = e.guns[e.slot];
   if (gi === null) return;
   const g = GUNS[gi];
-  const ox = e.x, oy = e.y + 1.52, oz = e.z;
+  // 나는 보이는 그대로 — 카메라(yawO = 발 + 눈높이)에서 쏜다. 봇은 자세만큼 낮아진 어깨에서.
+  const ox = e === me() ? yawO.position.x : e.x;
+  const oy = e === me() ? yawO.position.y : e.y + 1.52 * STANCE[e.st].h;
+  const oz = e === me() ? yawO.position.z : e.z;
+  e.lastShot = performance.now();
   const far = e !== me() && Math.hypot(e.x-me().x, e.z-me().z) > 45;
   sShot(g, far);
   for (let p=0; p<g.pel; p++){
@@ -926,18 +941,15 @@ function fireFrom(e, dirX, dirY, dirZ){
     const sx = -dz, sz = dx, sl = Math.hypot(sx,sz) || 1;
     dx += (sx/sl)*Math.cos(a)*r; dz += (sz/sl)*Math.cos(a)*r; dy += Math.sin(a)*r;
     const L = Math.hypot(dx,dy,dz); dx/=L; dy/=L; dz/=L;
-    const maxT = g.range*1.35;
+    const maxT = g.fly;
     const w = rayWorld(ox,oy,oz,dx,dy,dz,maxT);
     const h = rayEnts(ox,oy,oz,dx,dy,dz,w,e);
     const t = h ? h.t : w;
     if (e === me() || far === false) tracer(ox,oy,oz, ox+dx*t, oy+dy*t, oz+dz*t);
-    if (h){
-      const dm = g.dmg * h.p.m * rangeMul(g, t);
-      if (dm > 0){
-        hurt(h.e, dm, e, h.p, g.n);
-        fx(ox+dx*t, oy+dy*t, oz+dz*t, 0.3, 0.16, true);
-        if (e === me()){ hits++; hitT = 0.13; }
-      }
+    const dm = h ? g.dmg * h.p.m * rangeMul(g, t) : 0;
+    if (h && dm > 0 && hurt(h.e, dm, e, h.p, g.n)){   // 피·히트마커·명중 집계는 피해가 들어갔을 때만
+      fx(ox+dx*t, oy+dy*t, oz+dz*t, 0.3, 0.16, true);
+      if (e === me()){ hits++; hitT = 0.13; }
     } else fx(ox+dx*t, oy+dy*t, oz+dz*t, 0.25, 0.18, false);
   }
   if (e === me()){
@@ -1052,7 +1064,7 @@ function botHeal(b, dt){                         // 어려움 이상 — 안 보
     b.healT -= dt;
     if (b.healT <= 0 && b.healKind){
       const H = HEALS[b.healKind];
-      b.inv[b.healKind]--; b.hp = Math.min(H.cap, b.hp + H.hp); b.healKind = null;
+      b.inv[b.healKind]--; b.hp = Math.max(b.hp, Math.min(H.cap, b.hp + H.hp)); b.healKind = null;
     }
     return true;
   }
@@ -1122,7 +1134,7 @@ function updateBot(b, dt){
         const hl = Math.hypot(dx, dz) || 1, ox = b.aimX*d*T.aim;
         const px = -dz/hl, pz = dx/hl;          // 표적을 보는 방향의 옆
         dx += px*ox; dz += pz*ox;
-        const dy = ty - (b.y+1.52), L = Math.hypot(dx,dy,dz);
+        const dy = ty - (b.y + 1.52*STANCE[b.st].h), L = Math.hypot(dx,dy,dz);
         fireFrom(b, dx/L, dy/L, dz/L);
         if (b.fresh > 0) b.fresh--;
       }
@@ -1203,19 +1215,30 @@ function movePlayer(dt){
 }
 
 // ══ 줍기 ══════════════════════════════════════════════════════
-let nearLoot = -1;
+let nearLoot = -1, nearLootD = 1e9;
+// E 로 쓸 대상 — 보급 상자·전리품·지프 중 가장 가까운 것 (예전엔 지프 4.2m 안이면 지프만 됐다)
+function useTarget(){
+  const p = me(), c = nearCare(), car = nearCar();
+  const opts = [];
+  if (c) opts.push({ k:'care', d:Math.hypot(c.x-p.x, c.z-p.z), o:c });
+  if (nearLoot >= 0) opts.push({ k:'loot', d:nearLootD });
+  if (car) opts.push({ k:'car', d:Math.hypot(car.x-p.x, car.z-p.z) });
+  opts.sort((a,b) => a.d - b.d);
+  return opts[0] || null;
+}
 function scanLoot(){
   const p = me();
-  nearLoot = -1;
+  nearLoot = -1; nearLootD = 1e9;
   let bd = 2.6;
   for (let i=0;i<loots.length;i++){
     const l = loots[i];
     if (l.taken) continue;
     const d = Math.hypot(l.x-p.x, l.z-p.z) + Math.abs(l.y-p.y)*0.6;
-    if (d < bd){ bd = d; nearLoot = i; }
+    if (d < bd){ bd = d; nearLoot = i; nearLootD = d; }
   }
-  if (nearCar()){ promptEl.style.display='block'; promptEl.querySelector('span').textContent='지프 탑승'; return; }
-  if (nearCare()){ promptEl.style.display='block'; promptEl.querySelector('span').textContent='보급 상자 열기'; return; }
+  const u = useTarget();
+  if (u && u.k === 'car'){ promptEl.style.display='block'; promptEl.querySelector('span').textContent='지프 탑승'; return; }
+  if (u && u.k === 'care'){ promptEl.style.display='block'; promptEl.querySelector('span').textContent='보급 상자 열기'; return; }
   if (nearLoot < 0){ promptEl.style.display = 'none'; return; }
   const l = loots[nearLoot];
   promptEl.style.display = 'block';
@@ -1228,8 +1251,11 @@ function scanLoot(){
 }
 function pickUp(){
   const p = me();
-  if (riding || nearCar()){ toggleRide(); return; }
-  const cc = nearCare();
+  if (riding){ toggleRide(); return; }
+  const u = useTarget();
+  if (!u) return;
+  if (u.k === 'car'){ toggleRide(); return; }
+  const cc = u.k === 'care' ? u.o : null;
   if (cc){                                       // 보급 상자 — 저격이 들어 있다
     cc.taken = true; scene.remove(cc.mesh);
     const gi = 4;
@@ -1291,7 +1317,7 @@ function finishHeal(){
   if (!H || p.inv[kind] <= 0) return;
   p.inv[kind]--;
   if (kind === 'drink') p.boost = Math.min(100, p.boost + H.boost);
-  else p.hp = Math.min(H.cap, p.hp + H.hp);
+  else p.hp = Math.max(p.hp, Math.min(H.cap, p.hp + H.hp));   // 부스트로 cap 위에 있으면 깎지 않는다
   hudGun();
 }
 
@@ -1376,7 +1402,7 @@ function drawMap(){
       mapC.beginPath(); mapC.moveTo(X(e.x), Z(e.z));
       mapC.lineTo(X(e.x) - Math.sin(yawO.rotation.y)*12, Z(e.z) - Math.cos(yawO.rotation.y)*12);
       mapC.stroke();
-    } else if (Math.hypot(e.x-me().x, e.z-me().z) < 85){
+    } else if (performance.now() - (e.lastShot || -1e9) < 3000){   // 총소리를 낸 적만 3초
       mapC.fillStyle = '#ff5a4e';
       mapC.fillRect(X(e.x)-2, Z(e.z)-2, 4, 4);
     }
@@ -1410,6 +1436,7 @@ function finish(won){
   st.textContent = '처치 ' + kills + '   ·   명중률 '
     + (shots ? Math.round(hits/shots*100) : 0) + '%   ·   발사 ' + shots + '발';
   playBtn.textContent = '다시 한 판';
+  pauseEl.hidden = true;
   playBtn.disabled = false;
   veil.hidden = false;
   if (won) sKill(); else sHurt();
@@ -1440,13 +1467,34 @@ function lockMouse(){
   const p = canvas.requestPointerLock();
   if (p && p.catch) p.catch(() => {});
 }
+const pauseEl = document.getElementById('pause'), whyEl = document.getElementById('why');
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === canvas;
   if (!locked){ firing = false; for (const k in keys) keys[k] = false; }
+  // 잠금이 풀리면 무방비다 — 게임은 안 멈추니 그걸 분명히 알린다
+  pauseEl.hidden = locked || !playing || over;
 });
+pauseEl.addEventListener('click', () => { if (playing && !over) lockMouse(); });
+document.addEventListener('pointerlockerror', () => { if (playing && !over) pauseEl.hidden = false; });
+let whyTimer = 0;
+function why(msg){                               // 못 쏘는 이유를 화면 가운데 잠깐
+  whyEl.textContent = msg; whyEl.hidden = false;
+  clearTimeout(whyTimer); whyTimer = setTimeout(() => { whyEl.hidden = true; }, 900);
+}
+function cantShoot(){
+  const p = me(), gi = p.guns[p.slot];
+  if (p.drop !== 'ground') return '착지 전에는 못 쏜다';
+  if (riding) return '운전 중 — E 로 내린다';
+  if (gi === null) return '총이 없다';
+  if (p.healT > 0) return '치료 중';
+  if (p.reload > 0) return '재장전 중';
+  if (p.ammo[p.slot] <= 0 && p.mags[GUNS[gi].k] <= 0) return '탄약 없음';
+  return null;
+}
 canvas.addEventListener('mousedown', (e) => {
   if (!playing){ return; }
   if (!locked){ lockMouse(); return; }
+  if (e.button === 0){ const w = cantShoot(); if (w) why(w); }
   if (e.button === 0) firing = true;
   if (e.button === 2) setScope(true);
 });
@@ -1495,8 +1543,9 @@ function frame(now){
     if (live){
       elapsed += dt;
       if (careIdx < CARE_AT.length && elapsed > CARE_AT[careIdx]){ careIdx++; dropCare(); }
-      updateCars(dt); updateRed(dt); updateCares(dt);
+      updateRed(dt); updateCares(dt);
     }
+    updateCars(dt);                              // 지프는 내가 내렸으면 바로 몬다
     if (!riding && locked) movePlayer(dt);
     const p = me();
     // 치료
@@ -1536,10 +1585,11 @@ function frame(now){
         e.mesh.rotation.y = e.yaw;
         e.mesh.scale.y = STANCE[e.st].h;
       }
-      if (live && outOfZone(e)){
+      if (live && outOfZone(e)){                 // 매 프레임이 아니라 0.5초마다 모아서
         const dps = ZONE_DPS[Math.min(ZONE_DPS.length-1, zone.phase)];
-        hurt(e, dps*dt, null, null);
-      }
+        e.zoneAcc = (e.zoneAcc || 0) + dps*dt; e.zoneT = (e.zoneT || 0) + dt;
+        if (e.zoneT >= 0.5){ hurt(e, e.zoneAcc, null, null); e.zoneAcc = 0; e.zoneT = 0; }
+      } else { e.zoneAcc = 0; e.zoneT = 0; }
     }
     if (live) updateZone(dt);
     zoneFx.style.opacity = live && outOfZone(me()) ? '1' : '0';

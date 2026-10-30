@@ -55,6 +55,13 @@ body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
 #hit{position:absolute;left:50%;top:50%;width:20px;height:20px;margin:-10px 0 0 -10px;opacity:0}
 #hit i{position:absolute;left:9px;top:0;width:2px;height:20px;background:var(--red)}
 #hit i:first-child{transform:rotate(45deg)} #hit i:last-child{transform:rotate(-45deg)}
+#why{position:absolute;top:calc(50% + 74px);left:50%;transform:translateX(-50%);white-space:nowrap;
+  font-family:var(--f-mono);font-size:12.5px;color:var(--red);background:var(--panel);border:1px solid var(--line);padding:5px 10px}
+#pause{position:absolute;inset:0;z-index:5;display:grid;place-items:center;background:rgba(10,13,16,.55);cursor:pointer;text-align:center}
+#pause>div{background:var(--panel);border:1px solid var(--line);padding:18px 24px;max-width:min(360px,calc(100% - 32px))}
+#pause b{color:var(--amber);font-size:16px}
+#pause p{margin:8px 0 0;font-size:13px;color:var(--dim)}
+#pause .go2{color:var(--ink);font-family:var(--f-mono)}
 #prompt{position:absolute;top:calc(50% + 40px);left:50%;transform:translateX(-50%);
   white-space:nowrap;font-size:12.5px;background:var(--panel);border:1px solid var(--line);
   padding:6px 11px;display:none}
@@ -128,10 +135,15 @@ body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
   <div id="zonefx"></div>
   <div id="scope"></div>
 
+  <div id="pause" hidden>
+    <div><b>마우스 잠금 해제됨</b>
+      <p>적은 계속 움직입니다 — 게임은 멈추지 않습니다.</p>
+      <p class="go2">클릭해서 재개</p></div>
+  </div>
   <div id="hud" hidden>
     <div class="row">
       <div id="top">
-        <div class="pan" id="alive">생존 <b>12</b></div>
+        <div class="pan" id="alive">생존 <b>16</b></div>
         <div class="pan" id="zone">자기장 <b>—</b></div>
       </div>
       <div id="feed"></div>
@@ -140,6 +152,7 @@ body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
       <div id="cross"><i class="v"></i><i class="v"></i><i class="h"></i><i class="h"></i></div>
       <div id="hit"><i></i><i></i></div>
       <div id="prompt"><b>E</b><span></span></div>
+      <div id="why" hidden></div>
     </div>
     <div id="bot">
       <div id="vit">
