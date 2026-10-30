@@ -147,7 +147,7 @@ const cols = [];
 const addCol = (x, y0, z, hw, h, hd) => cols.push({ x, z, hw, hd, y0, y1:y0+h });
 function blocked(x, y, z, r){
   for (const c of cols){
-    if (y + 1.7 < c.y0 || y > c.y1) continue;
+    if (y + 1.7 < c.y0 || y >= c.y1 - 0.05) continue;   // 윗면에 선 사람은 막지 않는다 (지붕 위)
     if (x > c.x - c.hw - r && x < c.x + c.hw + r && z > c.z - c.hd - r && z < c.z + c.hd + r) return c;
   }
   return null;
@@ -423,8 +423,8 @@ function updateDrop(dt){
         e.x = Math.max(-HALF+6, Math.min(HALF-6, e.x));
         e.z = Math.max(-HALF+6, Math.min(HALF-6, e.z));
         if (!chute && e.y < CHUTE_Y){ e.drop = 'chute'; sChute(); feed('<i>낙하산 산개</i>'); }
-        const g = heightAt(e.x, e.z);
-        if (e.y <= g + 0.1){ e.y = g; e.vy = 0; e.drop = 'ground'; onLanded(); }
+        const g = landFloor(e.x, e.z, e.y - e.vy*dt);
+        if (e.y <= g + 0.1){ e.y = g; e.vy = 0; e.drop = 'ground'; unstick(e); onLanded(); }
       }
       yawO.position.set(e.x, e.y + eyeH(e), e.z);
       continue;
@@ -454,6 +454,21 @@ function updateDrop(dt){
     }
   }
   if (ents.every(e => e.drop === 'ground')) goLive();
+}
+function landFloor(x, z, fromY){               // 지붕 위로 내려오면 지붕에 선다
+  let f = heightAt(x, z);
+  for (const c of cols){
+    if (x > c.x-c.hw && x < c.x+c.hw && z > c.z-c.hd && z < c.z+c.hd && c.y1 <= fromY + 0.6 && c.y1 > f) f = c.y1;
+  }
+  return f;
+}
+function unstick(e){                             // 벽·바위 속에 내렸으면 가까운 빈 자리로 빼 준다
+  if (!blocked(e.x, e.y, e.z, BODY_R)) return;
+  for (let r = 0.5; r <= 4; r += 0.5)
+    for (let i = 0; i < 8; i++){
+      const t = i * Math.PI/4, x = e.x + Math.sin(t)*r, z = e.z + Math.cos(t)*r, y = heightAt(x, z);
+      if (!blocked(x, y, z, BODY_R)){ e.x = x; e.z = z; e.y = y; return; }
+    }
 }
 function onLanded(){
   feed('<i>착지 — 총을 찾아라</i>');
@@ -1366,6 +1381,10 @@ function frame(now){
   if (playing && !over && matchState === 'drop'){
     updateDrop(dt);
     elapsed += dt;
+  }
+  // 내가 먼저 내렸으면 남이 다 내릴 때까지 기다리지 않는다 — 착지하자마자 걷고 줍고 쏜다
+  const landed = matchState === 'drop' && me().drop === 'ground';
+  if (playing && !over && matchState === 'drop' && !landed){
     // 먼저 내린 봇은 남이 다 내릴 때까지 서 있지 않는다 — 착지하자마자 움직인다
     for (const e of ents){
       if (!e.alive || e.drop !== 'ground') continue;
@@ -1373,10 +1392,13 @@ function frame(now){
       if (e.mesh){ e.mesh.position.set(e.x, e.y, e.z); e.mesh.rotation.y = e.yaw; e.mesh.scale.y = STANCE[e.st].h; }
     }
   }
-  if (playing && !over && matchState === 'live'){
-    elapsed += dt;
-    if (careIdx < CARE_AT.length && elapsed > CARE_AT[careIdx]){ careIdx++; dropCare(); }
-    updateCars(dt); updateRed(dt); updateCares(dt);
+  if (playing && !over && (matchState === 'live' || landed)){
+    const live = matchState === 'live';          // 자기장·레드존·보급·지프는 전원 착지 뒤부터
+    if (live){
+      elapsed += dt;
+      if (careIdx < CARE_AT.length && elapsed > CARE_AT[careIdx]){ careIdx++; dropCare(); }
+      updateCars(dt); updateRed(dt); updateCares(dt);
+    }
     if (!riding && locked) movePlayer(dt);
     const p = me();
     // 치료
@@ -1416,13 +1438,13 @@ function frame(now){
         e.mesh.rotation.y = e.yaw;
         e.mesh.scale.y = STANCE[e.st].h;
       }
-      if (outOfZone(e)){
+      if (live && outOfZone(e)){
         const dps = ZONE_DPS[Math.min(ZONE_DPS.length-1, zone.phase)];
         hurt(e, dps*dt, null, null);
       }
     }
-    updateZone(dt);
-    zoneFx.style.opacity = outOfZone(me()) ? '1' : '0';
+    if (live) updateZone(dt);
+    zoneFx.style.opacity = live && outOfZone(me()) ? '1' : '0';
     scanLoot();
     if (hitT > 0){
       hitT -= dt;
@@ -1452,7 +1474,7 @@ function frame(now){
       hudGun(); drawMap();
     }
   }
-  if (playing && !over && matchState === 'drop'){
+  if (playing && !over && matchState === 'drop' && !landed){
     hudT += dt;
     if (hudT > 0.15){
       hudT = 0;
