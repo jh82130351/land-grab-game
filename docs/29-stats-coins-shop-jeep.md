@@ -144,7 +144,7 @@ BR_SRC=~/battle-royale ./deploy.sh
 `py_compile` (game_accounts.py) · `node --check` (lastdrop/game.js) 통과.
 
 ## 새 커밋 해시
-(커밋 후 기록)
+4b7fe84 — feat(29) 본 커밋
 
 ## 감독 확인 요청 사항 / 남은 이슈
 1. **가격·코인표 조정 (정현)** — 1등 10 코인이면 왕관(100)까지 치킨 10번.
