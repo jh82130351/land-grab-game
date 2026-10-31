@@ -76,6 +76,12 @@ body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
 #inv .row:hover{background:rgba(255,157,46,.08)}
 #inv .grp{color:var(--amber);padding:6px 6px 2px}
 #inv .none{color:var(--dim);padding:6px}
+#inv h3 small{font-size:10.5px;opacity:.75}
+#inv .slot{border:1px dashed rgba(255,255,255,.12);margin-bottom:4px}
+#inv .slot.sel{border-color:var(--amber)}
+#inv .over{outline:2px solid var(--amber);outline-offset:-2px;background:rgba(255,157,46,.12)}
+#inv .ghost{position:absolute;z-index:9;pointer-events:none;background:var(--bg);border:1px solid var(--amber);padding:5px 9px;white-space:nowrap}
+#inv .row.act{user-select:none;touch-action:none}
 #invMenu{position:absolute;z-index:7;display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--amber)}
 #invMenu button{font:inherit;color:var(--ink);background:none;border:0;padding:7px 12px;text-align:left;cursor:pointer}
 #invMenu button:hover{background:rgba(255,157,46,.15)}
@@ -164,10 +170,10 @@ body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
   <div id="scope"></div>
 
   <div id="inv" hidden>
-    <div class="ih"><b>인벤토리</b><span id="invW"></span><span class="k">Tab 닫기 · 클릭 줍기·사용·선택 · 우클릭 버리기 · 게임은 계속 진행</span></div>
+    <div class="ih"><b>인벤토리</b><span id="invW"></span><span class="k">Tab 닫기 · 클릭 줍기·사용·선택 · 끌어서 핫바·가방·바닥으로 · 우클릭 메뉴 · 게임은 계속 진행</span></div>
     <div class="ic">
-      <section><h3>주변 3m</h3><div id="invNear"></div></section>
-      <section><h3>가방</h3><div id="invBag"></div></section>
+      <section data-drop="ground"><h3>주변 3m <small>— 여기로 끌면 바닥에</small></h3><div id="invNear"></div></section>
+      <section data-drop="bag"><h3>가방 <small>— 총은 무게 0, 개수 제한 없음</small></h3><div id="invBag"></div></section>
       <section><h3>장비</h3><div id="invEq"></div></section>
     </div>
     <div id="invMenu" hidden></div>
@@ -219,7 +225,7 @@ body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
         <dt>C / Z</dt><dd>앉기 / 엎드리기 — 느려지지만 잘 맞는다</dd>
         <dt>좌 · 우클릭</dt><dd>발사 · 정조준 (저격은 배율)</dd>
         <dt>E</dt><dd>줍기 · 지프 탑승 · 보급 상자</dd>
-        <dt>R / 1 2 3</dt><dd>재장전 / 주무기 1·2 · 권총</dd>
+        <dt>R / 1~5 · 휠</dt><dd>재장전 / 핫바 (총·회복템) · 맨손이면 좌클릭 주먹</dd>
         <dt>Tab</dt><dd>인벤토리 — 주변·가방·장비, 우클릭 버리기</dd>
         <dt>F</dt><dd>알아서 적당한 회복품 사용 (인벤토리에서 클릭도)</dd>
       </dl>
