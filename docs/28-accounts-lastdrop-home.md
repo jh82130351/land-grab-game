@@ -176,7 +176,7 @@ BR_SRC=~/battle-royale ./deploy.sh
 `py_compile` (game_accounts.py · 운영 app.py) 통과 · `node --check` (lastdrop/game.js · 허브 스크립트) 통과 · `bash -n deploy.sh` 통과.
 
 ## 새 커밋 해시
-(커밋 후 기록)
+f1b03b7 — feat(28) 본 커밋
 
 ## 감독 확인 요청 사항 / 남은 이슈
 1. **기존 /_sec_ 계정을 재사용하지 않은 결정** (0번) — 확인 부탁.
