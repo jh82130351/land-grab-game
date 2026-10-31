@@ -1129,6 +1129,7 @@ function setScope(on){
   cam.fov = scoped ? (sn ? 20 : 52) : 74;
   cam.updateProjectionMatrix();
   scopeEl.style.display = (scoped && sn) ? 'block' : 'none';
+  crossEl.style.visibility = (scoped && sn) ? 'hidden' : '';   // 저격 배율에선 조준경 십자선만
   if (viewGun) viewGun.visible = !(scoped && sn);
 }
 
@@ -1665,7 +1666,7 @@ const vitL = document.querySelector('#vit .l');
 const gunN = document.querySelector('#gun .n'), gunA = document.querySelector('#gun .a');
 const gunR = document.querySelector('#gun .r'), gunS = document.querySelector('#gun .s');
 const hitEl = document.getElementById('hit');
-const crossBars = document.querySelectorAll('#cross i');
+const crossEl = document.getElementById('cross'), crossBars = crossEl.querySelectorAll('i');
 const mapC = document.getElementById('map').getContext('2d');
 const feeds = [];
 function feed(html){

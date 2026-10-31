@@ -47,15 +47,20 @@ body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
 #feed s{color:var(--amber);text-decoration:none}
 #feed i{color:var(--dim);font-style:normal}
 
-#mid{position:relative;display:grid;place-items:center}
-#cross{position:relative;width:1px;height:1px}
+#mid{position:relative}
+/* 조준점은 반드시 뷰포트 정중앙에 고정한다 (lastdrop-05).
+   총알은 카메라 정중앙 = 캔버스(#gl, 뷰포트 전체) 중앙으로 나간다. HUD 그리드 안에서 가운데 정렬하면
+   위·아래 행(킬피드·하단 HUD) 높이에 따라 조준점이 움직였다 — 1080p 에서 48px 위, 킬피드 5줄이면 17px 위.
+   #cross·#hit·#prompt·#why·#scope 는 position:fixed. #hud 와 그 조상에 transform·filter·backdrop-filter·contain 을
+   걸면 fixed 의 기준이 뷰포트가 아니게 되므로 걸지 말 것 (.pan 처럼 자식에 거는 건 괜찮다). */
+#cross{position:fixed;left:50%;top:50%;width:0;height:0}
 #cross i{position:absolute;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.6)}
 #cross .v{width:2px;height:8px;margin-left:-1px}
 #cross .h{height:2px;width:8px;margin-top:-1px}
-#hit{position:absolute;left:50%;top:50%;width:20px;height:20px;margin:-10px 0 0 -10px;opacity:0}
+#hit{position:fixed;left:50%;top:50%;width:20px;height:20px;margin:-10px 0 0 -10px;opacity:0}
 #hit i{position:absolute;left:9px;top:0;width:2px;height:20px;background:var(--red)}
 #hit i:first-child{transform:rotate(45deg)} #hit i:last-child{transform:rotate(-45deg)}
-#why{position:absolute;top:calc(50% + 74px);left:50%;transform:translateX(-50%);white-space:nowrap;
+#why{position:fixed;top:calc(50% + 74px);left:50%;transform:translateX(-50%);white-space:nowrap;
   font-family:var(--f-mono);font-size:12.5px;color:var(--red);background:var(--panel);border:1px solid var(--line);padding:5px 10px}
 #inv{position:absolute;inset:0;z-index:6;background:rgba(10,13,16,.86);display:flex;flex-direction:column;
   padding:14px max(16px,env(safe-area-inset-left,0px));font-family:var(--f-mono);font-size:12.5px}
@@ -81,13 +86,17 @@ body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
 #pause b{color:var(--amber);font-size:16px}
 #pause p{margin:8px 0 0;font-size:13px;color:var(--dim)}
 #pause .go2{color:var(--ink);font-family:var(--f-mono)}
-#prompt{position:absolute;top:calc(50% + 40px);left:50%;transform:translateX(-50%);
+#prompt{position:fixed;top:calc(50% + 40px);left:50%;transform:translateX(-50%);
   white-space:nowrap;font-size:12.5px;background:var(--panel);border:1px solid var(--line);
   padding:6px 11px;display:none}
 #prompt b{font-family:var(--f-mono);color:var(--amber);border:1px solid rgba(255,157,46,.45);
   padding:1px 5px;margin-right:6px}
-#scope{position:absolute;inset:0;display:none;pointer-events:none;
+#scope{position:fixed;inset:0;display:none;pointer-events:none;
   background:radial-gradient(circle at 50% 50%,rgba(0,0,0,0) 24%,rgba(0,0,0,.94) 40%)}
+/* 조준경 십자선 — 같은 뷰포트 정중앙 기준. 두께 2px 를 중앙에 걸치게 margin -1px */
+#scope::before,#scope::after{content:'';position:fixed;background:rgba(0,0,0,.85)}
+#scope::before{left:0;right:0;top:50%;height:2px;margin-top:-1px}
+#scope::after{top:0;bottom:0;left:50%;width:2px;margin-left:-1px}
 
 #bot{display:flex;align-items:flex-end;justify-content:space-between;gap:12px}
 #vit{display:flex;flex-direction:column;gap:5px;min-width:0}
