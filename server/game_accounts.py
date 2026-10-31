@@ -447,7 +447,10 @@ def match_end():
         if not _int(kills, 0, N_PLAYERS - place):          # 내 아래 순위(먼저 죽은 사람) 수보다 많이 죽일 수 없다
             return no('bad_kills', '킬 수가 이상하다')
         if not _int(shots, 0, 20000) or not _int(hits, 0, shots):
-            return no('bad_shots', '명중 수가 이상하다')
+            # 발사·명중은 통계일 뿐 — 이상하면 판을 거부하지 않고 이 판의 명중 통계만 0/0 으로 지우고 로그 (샷건 집계 버그 대응).
+            # 판 거부는 토큰·시간·순위·킬 범위 같은 핵심 위조 신호에만.
+            _reject(conn, u['id'], 'shots_voided', {k: d.get(k) for k in ('place', 'kills', 'survival', 'shots', 'hits')})
+            shots, hits = 0, 0
         if not isinstance(surv, (int, float)) or isinstance(surv, bool) or not 0 <= surv <= elapsed + 5:
             return no('bad_survival', '생존 시간이 이상하다')
         # 판 길이 규칙 (최종) — 30초 미만: 기록·코인 없음 / 30초 이상: 기록 + 순위대로 코인. 순위별 최소 시간 검사는 없다.

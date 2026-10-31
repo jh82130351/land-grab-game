@@ -1797,6 +1797,7 @@ function fireFrom(e, dirX, dirY, dirZ){
   e.lastShot = performance.now();
   const far = e !== me() && Math.hypot(e.x-me().x, e.z-me().z) > 45;
   sShot(g, far);
+  let anyHit = false;
   for (let p=0; p<g.pel; p++){
     let dx=dirX, dy=dirY, dz=dirZ;
     // 봇은 사람보다 훨씬 못 맞힌다. 얼마나 못 맞히는지는 난이도(TIERS)가 정한다.
@@ -1821,11 +1822,12 @@ function fireFrom(e, dirX, dirY, dirZ){
       if (Math.hypot(ch.c.x - me().x, ch.c.z - me().z) < 70) sMetal();
     } else if (h && dm > 0 && hurt(h.e, dm, e, h.p, g.n)){   // 피·히트마커·명중 집계는 피해가 들어갔을 때만
       fx(ox+dx*t, oy+dy*t, oz+dz*t, 0.3, 0.16, true);
-      if (e === me()){ hits++; hitT = 0.13; }
+      if (e === me()){ anyHit = true; hitT = 0.13; }
     } else fx(ox+dx*t, oy+dy*t, oz+dz*t, 0.25, 0.18, false);
   }
   if (e === me()){
-    shots++;
+    shots++;                                     // 방아쇠 1번 = 발사 1
+    if (anyHit) hits++;                          // 명중도 방아쇠 1번에 최대 1 — 샷건 알갱이 여러 개가 맞아도 1 (hits ≤ shots)
     const k = g.kick * 0.011;
     kickP += k; kickY += (Math.random()-0.5)*k*0.6;
     pitO.rotation.x += k; yawO.rotation.y += (Math.random()-0.5)*k*0.6;
@@ -1833,17 +1835,18 @@ function fireFrom(e, dirX, dirY, dirZ){
   }
 }
 const _fd = new THREE.Vector3();
-function myShoot(){
+function myShoot(){                             // 쐈으면(주먹 포함) true
   const p = me();
-  if (p.cd > 0 || p.reload > 0 || p.healT > 0) return;
-  if (p.drop !== 'ground' || riding) return;
+  if (p.cd > 0 || p.reload > 0 || p.healT > 0) return false;
+  if (p.drop !== 'ground' || riding) return false;
   const h = heldGun(p);
   cam.getWorldDirection(_fd);
-  if (!h){ punch(p, _fd.x, _fd.y, _fd.z); return; }   // 맨손 — 주먹
-  if (h.ld <= 0){ startReload(); return; }
+  if (!h){ punch(p, _fd.x, _fd.y, _fd.z); return true; }   // 맨손 — 주먹
+  if (h.ld <= 0){ startReload(); fireQ = -1e9; return false; }
   h.ld--; p.cd = GUNS[h.gi].rate;
   fireFrom(p, _fd.x, _fd.y, _fd.z);
   hudGun();
+  return true;
 }
 function punch(e, dx, dy, dz){
   e.cd = FIST.rate;
@@ -2410,6 +2413,8 @@ function moveEnt(e, dx, dz){                     // 0.12m 조각으로 나눠 �
 }
 const keys = {};
 let locked = false, playing = false, firing = false;
+let fireQ = -1e9;                                // 마지막 왼클릭 시각 — 프레임 사이에 눌렀다 뗀 클릭·쿨다운 직전 클릭을 놓치지 않게
+const FIRE_BUF = 300;
 function movePlayer(dt){
   const p = me();
   const run = (keys.ShiftLeft || keys.ShiftRight) && p.healT <= 0 && p.st === 0;
@@ -3017,7 +3022,7 @@ canvas.addEventListener('mousedown', (e) => {
   if (!playing){ return; }
   if (!locked){ lockMouse(); return; }
   if (e.button === 0){ const w = cantShoot(); if (w) why(w); }
-  if (e.button === 0) firing = true;
+  if (e.button === 0){ firing = true; fireQ = performance.now(); }   // 짧게 톡 친 클릭도 다음 프레임에 쏜다
   if (e.button === 2) setScope(true);
 });
 addEventListener('mouseup', (e) => {
@@ -3090,7 +3095,7 @@ function frame(now){
         hudGun();
       }
     }
-    if (firing && locked) myShoot();
+    if ((firing || performance.now() - fireQ < FIRE_BUF) && locked && myShoot()) fireQ = -1e9;   // 쿨다운 중 클릭은 0.3초 동안 기다렸다 쏜다
     // 반동 회복
     const back = Math.min(1, dt*7);
     if (Math.abs(kickP) > 1e-5){ pitO.rotation.x -= kickP*back; kickP *= (1-back); }
