@@ -98,7 +98,7 @@ DB 변경은 `ld_totals` 테이블 추가뿐 — 기존 행은 그대로.
 `node --check lastdrop/game.js` · `py_compile server/game_accounts.py` 통과.
 
 ## 새 커밋 해시
-(커밋 후 기록)
+a6a60b9 — feat(30) 본 커밋
 
 ## 감독 확인 요청 사항 / 남은 이슈
 1. **운영 배포 승인** — 위 3단계 (Flask 재기동 포함).
