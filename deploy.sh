@@ -29,6 +29,10 @@ cp "$REPO/voxelcraft/index.html" "$GAMES/voxelcraft/index.html"
 # 라스트 드롭만 파일이 둘이다. Flask 의 /game/<path:fn> 이 game.js 도 그대로 서빙한다.
 cp "$REPO/lastdrop/index.html"   "$GAMES/lastdrop/index.html"
 cp "$REPO/lastdrop/game.js"      "$GAMES/lastdrop/game.js"
+# game.js 는 4시간 캐시(max-age=14400)라, 배포한 index.html 이 내용 해시로 game.js?v=… 를 부르게 한다 (07-b — 옛 game.js 가 남던 것)
+LD_V=$(md5sum "$REPO/lastdrop/game.js" | cut -c1-10)
+sed -i "s|src=\"game.js[^\"]*\"|src=\"game.js?v=$LD_V\"|" "$GAMES/lastdrop/index.html"
+grep -q "game.js?v=$LD_V" "$GAMES/lastdrop/index.html" || { echo "lastdrop index.html 에 game.js 버전을 못 넣었다"; exit 1; }
 
 # 1-b) 게임 계정 API 모듈 — valuetopic/ 옆으로. 내용이 바뀌었을 때만 복사하고 재기동 안내
 VT=/home/jh-happy/.openclaw-mir/workspace/valuetopic
