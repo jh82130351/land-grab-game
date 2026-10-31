@@ -148,6 +148,34 @@ button.link{font:inherit;font-size:12px;color:var(--dim);background:none;border:
 .dopts .opt{font:inherit;font-size:12px;color:var(--ink);background:none;border:1px solid var(--line);padding:3px 8px;cursor:pointer}
 .dopts .opt.on{border-color:var(--amber);color:var(--amber)}
 #homeMsg{font-size:12px;color:var(--amber);min-height:1em}
+/* 전적·코인·상점·기록 (29 문서) */
+#chicken{font-family:var(--f-dis);font-weight:900;font-size:22px;color:#fff}
+#chicken:empty,#coins:empty,#coinMsg:empty{display:none}
+#coins{font-family:var(--f-mono);font-size:13px;color:var(--amber);margin-top:-6px}
+#coinMsg{font-family:var(--f-mono);font-size:13px;color:var(--dim)}
+#coinMsg.got{font-size:22px;font-weight:700;color:var(--amber)}
+.btns.sm{flex-wrap:wrap}
+.panel{display:flex;flex-direction:column;gap:8px;text-align:left;border:1px solid var(--line);padding:10px;background:rgba(11,15,19,.6)}
+.panel[hidden]{display:none}
+.dopts input[type=color]{width:26px;height:24px;padding:0;border:2px solid rgba(255,255,255,.15);background:none;cursor:pointer}
+.dopts input[type=color].on{border-color:var(--amber)}
+.dopts .dim,.panel .dim{font-size:11.5px;color:var(--dim);font-style:normal;align-self:center}
+.shead{font-family:var(--f-mono);font-size:13px;color:var(--amber)}
+.srow{display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center;padding:6px 8px;border:1px solid transparent;cursor:pointer;font-size:13px}
+.srow:hover,.srow.on{border-color:var(--line);background:rgba(255,157,46,.06)}
+.srow i{font-style:normal;color:var(--dim);font-size:11.5px}
+.srow button{font:inherit;font-size:12px;padding:4px 10px;border:1px solid var(--line);background:none;color:var(--ink);cursor:pointer;min-width:84px}
+.srow button.buy{border-color:var(--amber);color:var(--amber)}
+.srow button:disabled{opacity:.5;cursor:progress}
+.rgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.rc{display:flex;flex-direction:column;align-items:center;padding:6px 2px;border:1px solid var(--line)}
+.rc b{font-family:var(--f-mono);font-size:16px;color:#fff;font-weight:400}
+.rc span{font-size:11px;color:var(--dim)}
+.rlist{display:flex;flex-direction:column;gap:2px;font-family:var(--f-mono);font-size:12px}
+.rh{color:var(--dim);margin:4px 0 2px}
+.rr{display:grid;grid-template-columns:1.4fr .8fr .8fr .8fr;gap:6px;color:var(--dim)}
+.rr b{color:var(--ink);font-weight:400}
+.rr b.win{color:var(--amber)}
 .card{width:100%;max-width:440px;display:flex;flex-direction:column;gap:15px;text-align:center}
 .card h1{margin:0;font-weight:900;font-size:clamp(34px,9vw,52px);line-height:.95;letter-spacing:-.02em;
   text-wrap:balance;color:#fff;text-shadow:0 0 44px rgba(255,157,46,.4)}
@@ -243,13 +271,23 @@ button.link{font:inherit;font-size:12px;color:var(--dim);background:none;border:
         <button type="button" class="link" id="guestBtn">로그인 없이 하기</button>
       </div>
       <div id="homeMain" hidden>
+        <div id="chicken"></div><div id="coins"></div>
         <canvas id="pv" aria-label="내 캐릭터 미리보기 — 끌어서 돌리기"></canvas>
         <div id="nick"></div><div id="nickSub"></div>
         <div class="btns"><button class="go" id="play" disabled>섬 만드는 중…</button></div>
-        <div class="btns sm"><button type="button" id="dressBtn">꾸미기</button><button type="button" id="outBtn">로그아웃</button></div>
+        <div id="coinMsg" role="status"></div>
+        <div class="btns sm"><button type="button" id="dressBtn">꾸미기</button><button type="button" id="shopBtn">상점</button><button type="button" id="recBtn">기록</button><button type="button" id="outBtn">로그아웃</button></div>
         <div id="dress" hidden>
           <div id="dressRows"></div>
           <div class="btns sm"><button type="button" id="saveBtn" class="hl">저장</button><button type="button" id="cancelBtn">취소</button></div>
+        </div>
+        <div id="shop" class="panel" hidden>
+          <div id="shopRows"></div>
+          <div class="btns sm"><button type="button" id="shopClose">닫기</button></div>
+        </div>
+        <div id="rec" class="panel" hidden>
+          <div id="recBody"></div>
+          <div class="btns sm"><button type="button" id="recClose">닫기</button></div>
         </div>
         <div id="homeMsg" role="status"></div>
       </div>

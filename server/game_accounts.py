@@ -42,8 +42,30 @@ LOGIN_WINDOW, LOGIN_MAX = 600, 5          # 10분에 5번
 REG_WINDOW, REG_MAX = 3600, 5             # 1시간에 5번
 ID_RE = re.compile(r'^[A-Za-z0-9]{4,16}$')
 NICK_BAD = re.compile(r'[\x00-\x1f\x7f<>]')
-# 꾸미기 — 항목마다 프리셋 번호. 값은 0 ~ n-1 의 정수만 받는다
-AVATAR_SPEC = {'skin': 8, 'hair': 3, 'hairColor': 8, 'top': 8, 'bottom': 8, 'hat': 4, 'bag': 8}
+# 꾸미기 v2 (29 문서) — 색은 자유(#rrggbb, 무료), 머리 모양 0~2, 장식은 머리·얼굴·등 부위별 1개(보유한 것만)
+HEX_RE = re.compile(r'^#[0-9a-f]{6}$')
+AV_COLORS = ('skin', 'hairColor', 'top', 'bottom', 'bag')
+AV_SLOTS = ('head', 'face', 'back')
+# 상점 — 가격은 여기 한 곳(서버)에서만 정한다. 클라이언트가 보낸 가격은 안 믿는다
+SHOP = {
+    'pumpkin':    ('할로윈 호박 모자', 'head', 30),
+    'witch':      ('마녀 모자',        'head', 30),
+    'beanie':     ('비니',             'head', 10),
+    'cap':        ('캡',               'head', 10),
+    'crown':      ('왕관',             'head', 100),
+    'sunglasses': ('선글라스',         'face', 15),
+    'goggles':    ('고글',             'face', 20),
+    'skull':      ('해골 가면',        'face', 40),
+    'cape':       ('망토',             'back', 50),
+    'scarf':      ('스카프',           'back', 15),
+}
+# 코인 — 순위별 (1~4등), 5등 이하 0. 매치 검증 (29 문서)
+COIN_BY_PLACE = {1: 10, 2: 3, 3: 2, 4: 1}
+N_PLAYERS = 16
+MIN_MATCH = 180            # 판 길이 최소 3분 (서버가 잰 토큰 발급 ~ 결과 제출)
+TOKEN_TTL = 3600           # 토큰은 1시간 안에 써야 한다
+MAX_PER_HOUR = 12          # 계정당 시간당 코인 받는 판 수
+MAX_TOKENS_PER_HOUR = 40   # 토큰 발급 남용 방지
 
 _ph = PasswordHasher()                    # argon2id 기본값 (m=64MiB, t=3, p=4)
 _DUMMY = _ph.hash(secrets.token_hex(16))
@@ -74,6 +96,18 @@ def _db():
         CREATE INDEX IF NOT EXISTS hits_k ON hits(kind, key, ts);
         CREATE TABLE IF NOT EXISTS avatars(
             user_id INTEGER PRIMARY KEY, game TEXT NOT NULL, data TEXT NOT NULL, updated_ts REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS matches(
+            id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+            issued_ts REAL NOT NULL, ended_ts REAL, place INTEGER, kills INTEGER, survival REAL,
+            shots INTEGER, hits INTEGER, coins INTEGER, status TEXT NOT NULL DEFAULT 'open');
+        CREATE INDEX IF NOT EXISTS matches_u ON matches(user_id, status, ended_ts);
+        CREATE TABLE IF NOT EXISTS wallet(user_id INTEGER PRIMARY KEY, coins INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS coin_log(id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, delta INTEGER NOT NULL,
+            reason TEXT NOT NULL, ts REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS owned(user_id INTEGER NOT NULL, item TEXT NOT NULL, ts REAL NOT NULL,
+            PRIMARY KEY(user_id, item));
+        CREATE TABLE IF NOT EXISTS rejects(id INTEGER PRIMARY KEY, user_id INTEGER, reason TEXT NOT NULL,
+            payload TEXT, ts REAL NOT NULL);
     ''')
     return conn
 
@@ -269,15 +303,32 @@ def me():
         conn.close()
 
 
-def _valid_avatar(a):
-    if not isinstance(a, dict) or set(a) != set(AVATAR_SPEC):
+def _owned(conn, uid):
+    return {r['item'] for r in conn.execute('SELECT item FROM owned WHERE user_id=?', (uid,))}
+
+
+def _valid_avatar(a, owned):
+    """v2 만 받는다. 색은 #rrggbb, 머리 모양 0~2, 장식은 그 부위의 아이템이고 보유한 것만."""
+    keys = {'v', 'hair', *AV_COLORS, *AV_SLOTS}
+    if not isinstance(a, dict) or a.get('v') != 2 or set(a) != keys:
         return None
-    out = {}
-    for k, n in AVATAR_SPEC.items():
+    hair = a['hair']
+    if not isinstance(hair, int) or isinstance(hair, bool) or not 0 <= hair <= 2:
+        return None
+    out = {'v': 2, 'hair': hair}
+    for k in AV_COLORS:
         v = a[k]
-        if not isinstance(v, int) or isinstance(v, bool) or not (0 <= v < n):
+        if not isinstance(v, str) or not HEX_RE.match(v.lower()):
             return None
-        out[k] = v
+        out[k] = v.lower()
+    for slot in AV_SLOTS:
+        v = a[slot]
+        if v is None:
+            out[slot] = None
+            continue
+        if not isinstance(v, str) or v not in SHOP or SHOP[v][1] != slot or v not in owned:
+            return None
+        out[slot] = v
     return out
 
 
@@ -295,9 +346,9 @@ def avatar():
             return _err('CSRF 토큰이 맞지 않다', 403)
         if not request.is_json or (request.content_length or 0) > 1024:
             return _err('JSON 1KB 이하로', 413)
-        a = _valid_avatar((request.get_json(silent=True) or {}).get('avatar'))
+        a = _valid_avatar((request.get_json(silent=True) or {}).get('avatar'), _owned(conn, u['id']))
         if a is None:
-            return _err('꾸미기 값이 맞지 않다')
+            return _err('꾸미기 값이 맞지 않다 (가지지 않은 장식이거나 형식이 틀렸다)')
         conn.execute('INSERT INTO avatars(user_id, game, data, updated_ts) VALUES(?,?,?,?) '
                      'ON CONFLICT(user_id) DO UPDATE SET data=excluded.data, updated_ts=excluded.updated_ts',
                      (u['id'], 'lastdrop', json.dumps(a, sort_keys=True), time.time()))
@@ -305,3 +356,187 @@ def avatar():
         return jsonify({'avatar': a})
     finally:
         conn.close()
+
+
+# ══ 전적 · 코인 · 상점 (29 문서) ══════════════════════════════════
+def _authed(conn, need_csrf):
+    u, s = _current(conn)
+    if not u:
+        return None, _err('로그인이 필요하다', 401)
+    if need_csrf and not _need_csrf(s):
+        return None, _err('CSRF 토큰이 맞지 않다', 403)
+    return u, None
+
+
+def _coins(conn, uid):
+    r = conn.execute('SELECT coins FROM wallet WHERE user_id=?', (uid,)).fetchone()
+    return r['coins'] if r else 0
+
+
+def _reject(conn, uid, reason, payload):
+    conn.execute('INSERT INTO rejects(user_id, reason, payload, ts) VALUES(?,?,?,?)',
+                 (uid, reason, json.dumps(payload, ensure_ascii=False)[:500], time.time()))
+    print('[game_accounts] 매치 결과 거부 user=%s reason=%s' % (uid, reason), flush=True)
+
+
+@game_bp.route('/game/api/lastdrop/match/start', methods=['POST'])
+def match_start():
+    """판 시작 — 일회용 매치 토큰. 결과를 낼 때 이 토큰이 있어야 전적·코인이 남는다."""
+    conn = _db()
+    try:
+        u, bad = _authed(conn, True)
+        if bad:
+            return bad
+        n = conn.execute('SELECT COUNT(*) FROM matches WHERE user_id=? AND issued_ts>?',
+                         (u['id'], time.time() - 3600)).fetchone()[0]
+        if n >= MAX_TOKENS_PER_HOUR:
+            return _err('판을 너무 자주 시작했다 — 잠시 뒤에', 429)
+        tok = secrets.token_urlsafe(24)
+        conn.execute('INSERT INTO matches(user_id, token_hash, issued_ts) VALUES(?,?,?)',
+                     (u['id'], hashlib.sha256(tok.encode()).hexdigest(), time.time()))
+        conn.commit()
+        return jsonify({'token': tok})
+    finally:
+        conn.close()
+
+
+def _int(v, lo, hi):
+    return isinstance(v, int) and not isinstance(v, bool) and lo <= v <= hi
+
+
+@game_bp.route('/game/api/lastdrop/match/end', methods=['POST'])
+def match_end():
+    """판 끝 — 토큰 + 결과. 서버가 검증하고 코인을 계산한다(클라이언트 값은 순위·킬 등 '사실' 만 받는다)."""
+    conn = _db()
+    try:
+        u, bad = _authed(conn, True)
+        if bad:
+            return bad
+        if not request.is_json or (request.content_length or 0) > 1024:
+            return _err('JSON 1KB 이하로', 413)
+        d = request.get_json(silent=True) or {}
+        tok = d.get('token') if isinstance(d.get('token'), str) else ''
+        m = conn.execute('SELECT * FROM matches WHERE token_hash=? AND user_id=?',
+                         (hashlib.sha256(tok.encode()).hexdigest(), u['id'])).fetchone() if tok else None
+        now = time.time()
+
+        def no(reason, msg):
+            if m and m['status'] == 'open':
+                conn.execute("UPDATE matches SET status='rejected', ended_ts=? WHERE id=?", (now, m['id']))
+            _reject(conn, u['id'], reason, {k: d.get(k) for k in ('place', 'kills', 'survival', 'shots', 'hits')})
+            conn.commit()
+            return _err(msg, 400, reason=reason)
+
+        if not m:
+            return no('bad_token', '모르는 매치 토큰')
+        if m['status'] != 'open':
+            return no('token_reused', '이미 쓴 매치 토큰')
+        elapsed = now - m['issued_ts']
+        if elapsed > TOKEN_TTL:
+            return no('expired', '매치 토큰이 만료됐다')
+        place, kills, shots, hits, surv = d.get('place'), d.get('kills'), d.get('shots'), d.get('hits'), d.get('survival')
+        if not _int(place, 1, N_PLAYERS):
+            return no('bad_place', '순위가 이상하다')
+        if not _int(kills, 0, N_PLAYERS - place):          # 내 아래 순위(먼저 죽은 사람) 수보다 많이 죽일 수 없다
+            return no('bad_kills', '킬 수가 이상하다')
+        if not _int(shots, 0, 20000) or not _int(hits, 0, shots):
+            return no('bad_shots', '명중 수가 이상하다')
+        if not isinstance(surv, (int, float)) or isinstance(surv, bool) or not 0 <= surv <= elapsed + 5:
+            return no('bad_survival', '생존 시간이 이상하다')
+        status, coins, why = 'ok', COIN_BY_PLACE.get(place, 0), None
+        if elapsed < MIN_MATCH:
+            if place <= 4:                                  # 3분도 안 돼 4등 안 — 있을 수 없다
+                return no('too_short', '판이 너무 짧다 (3분 미만)')
+            status, coins, why = 'nocoin', 0, 'too_short'   # 일찍 죽은 판 — 전적만 (어차피 코인 0)
+        recent = conn.execute("SELECT COUNT(*) FROM matches WHERE user_id=? AND status='ok' AND ended_ts>?",
+                              (u['id'], now - 3600)).fetchone()[0]
+        if coins and recent >= MAX_PER_HOUR:
+            status, coins, why = 'capped', 0, 'hourly_cap'
+            _reject(conn, u['id'], 'hourly_cap', {'place': place})
+        conn.execute('UPDATE matches SET status=?, ended_ts=?, place=?, kills=?, survival=?, shots=?, hits=?, coins=? '
+                     "WHERE id=? AND status='open'",
+                     (status, now, place, kills, round(float(surv), 1), shots, hits, coins, m['id']))
+        if coins:
+            conn.execute('INSERT INTO wallet(user_id, coins) VALUES(?, ?) '
+                         'ON CONFLICT(user_id) DO UPDATE SET coins = coins + excluded.coins', (u['id'], coins))
+            conn.execute('INSERT INTO coin_log(user_id, delta, reason, ts) VALUES(?,?,?,?)',
+                         (u['id'], coins, 'place_%d' % place, now))
+        conn.commit()
+        return jsonify({'coins': coins, 'total': _coins(conn, u['id']), 'status': status, 'why': why})
+    finally:
+        conn.close()
+
+
+@game_bp.route('/game/api/lastdrop/stats', methods=['GET'])
+def stats():
+    conn = _db()
+    try:
+        u, bad = _authed(conn, False)
+        if bad:
+            return bad
+        rows = conn.execute("SELECT place, kills, survival, shots, hits, ended_ts FROM matches "
+                            "WHERE user_id=? AND status IN ('ok','nocoin','capped') ORDER BY ended_ts DESC",
+                            (u['id'],)).fetchall()
+        g = len(rows)
+        wins = sum(1 for r in rows if r['place'] == 1)
+        shots = sum(r['shots'] for r in rows)
+        return jsonify({
+            'games': g, 'wins': wins, 'winRate': round(wins / g * 100, 1) if g else 0,
+            'top4': sum(1 for r in rows if r['place'] <= 4),
+            'avgPlace': round(sum(r['place'] for r in rows) / g, 1) if g else None,
+            'kills': sum(r['kills'] for r in rows), 'maxKills': max((r['kills'] for r in rows), default=0),
+            'accuracy': round(sum(r['hits'] for r in rows) / shots * 100, 1) if shots else 0,
+            'recent': [{'ts': r['ended_ts'], 'place': r['place'], 'kills': r['kills'], 'survival': r['survival']}
+                       for r in rows[:10]],
+            'coins': _coins(conn, u['id']),
+        })
+    finally:
+        conn.close()
+
+
+@game_bp.route('/game/api/lastdrop/shop', methods=['GET'])
+def shop():
+    conn = _db()
+    try:
+        u, bad = _authed(conn, False)
+        if bad:
+            return bad
+        own = _owned(conn, u['id'])
+        return jsonify({'coins': _coins(conn, u['id']),
+                        'items': [{'id': k, 'name': v[0], 'slot': v[1], 'price': v[2], 'owned': k in own}
+                                  for k, v in SHOP.items()]})
+    finally:
+        conn.close()
+
+
+@game_bp.route('/game/api/lastdrop/shop/buy', methods=['POST'])
+def shop_buy():
+    """구매 — 잔액 확인·차감·보유 등록을 한 트랜잭션으로. 가격은 서버 목록."""
+    conn = _db()
+    try:
+        u, bad = _authed(conn, True)
+        if bad:
+            return bad
+        item = (request.get_json(silent=True) or {}).get('item') if request.is_json else None
+        if not isinstance(item, str) or item not in SHOP:
+            return _err('없는 상품')
+        price = SHOP[item][2]
+        if conn.execute('SELECT 1 FROM owned WHERE user_id=? AND item=?', (u['id'], item)).fetchone():
+            return _err('이미 가지고 있다', 409)
+        try:
+            cur = conn.execute('UPDATE wallet SET coins = coins - ? WHERE user_id=? AND coins >= ?',
+                               (price, u['id'], price))
+            if cur.rowcount != 1:
+                conn.rollback()
+                return _err('코인이 부족하다 (%d 필요, %d 보유)' % (price, _coins(conn, u['id'])), 402)
+            conn.execute('INSERT INTO owned(user_id, item, ts) VALUES(?,?,?)', (u['id'], item, time.time()))
+            conn.execute('INSERT INTO coin_log(user_id, delta, reason, ts) VALUES(?,?,?,?)',
+                         (u['id'], -price, 'buy_' + item, time.time()))
+            conn.commit()
+        except sqlite3.IntegrityError:                     # 동시에 두 번 산 경우 — 둘째는 되돌린다
+            conn.rollback()
+            return _err('이미 가지고 있다', 409)
+        return jsonify({'coins': _coins(conn, u['id']), 'item': item})
+    finally:
+        conn.close()
+

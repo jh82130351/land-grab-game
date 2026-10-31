@@ -372,25 +372,44 @@ function makeBotGeo(){
   put(1.56, 0.34, 0.12, 0.34, 0x2f3a46);
   botGeo = merge(ps);
 }
-// ══ 캐릭터 꾸미기 (28 문서) ══════════════════════════════════
-// 형태와 색으로만 — 텍스처 없음. 항목마다 프리셋 번호를 저장한다.
-// 개수는 서버 game_accounts.py 의 AVATAR_SPEC 과 같아야 한다 (skin 8 · hair 3 · hairColor 8 · top 8 · bottom 8 · hat 4 · bag 8).
-const AV = {
-  skin:      { n:'피부',      c:[0xf6d7b8,0xeec39a,0xdcaa7e,0xc68e5f,0xa8703f,0x8a5532,0x6b3d24,0x4a2a19] },
-  hair:      { n:'머리 모양', s:['짧은 머리','긴 머리','뾰족 머리'] },
-  hairColor: { n:'머리 색',   c:[0x1c1a19,0x4a3020,0x7a4f2c,0xd9b46a,0xb5462c,0x9a9a9a,0x3d5fa8,0xd77fa8] },
-  top:       { n:'상의',      c:[0xb4552f,0x2f6f9a,0x3d7a3a,0xd9c25a,0x7a3d8a,0xe8e4dc,0x2b2b2b,0xd1495b] },
-  bottom:    { n:'하의',      c:[0x2f3a46,0x4b5a3a,0x6b5a46,0x1f2a44,0x8a8a8a,0x2b2b2b,0x7a2f2f,0xc9b38a] },
-  hat:       { n:'모자',      s:['없음','캡','헬멧형','비니'] },
-  bag:       { n:'가방',      c:[0x5b4a32,0x3a4a5b,0x4b5a3a,0x8a3a2a,0x2b2b2b,0xc9b38a,0x7a3d8a,0x2f6f9a] },
+// ══ 캐릭터 꾸미기 (28 · 29 문서) ═════════════════════════════
+// 형태와 색으로만 — 텍스처 없음. 색은 자유(#rrggbb, 무료). 장식은 상점에서 산 것만, 머리·얼굴·등 부위별 1개.
+// 저장 형식 v2 = { v:2, hair, skin, hairColor, top, bottom, bag, head, face, back } — 서버 game_accounts.py 가 같은 규칙으로 검사한다.
+const AV_PRESET = {                              // 색 고르기의 빠른 칸 (자유 색 선택기도 있다)
+  skin:      ['#f6d7b8','#eec39a','#dcaa7e','#c68e5f','#a8703f','#8a5532','#6b3d24','#4a2a19'],
+  hairColor: ['#1c1a19','#4a3020','#7a4f2c','#d9b46a','#b5462c','#9a9a9a','#3d5fa8','#d77fa8'],
+  top:       ['#b4552f','#2f6f9a','#3d7a3a','#d9c25a','#7a3d8a','#e8e4dc','#2b2b2b','#d1495b'],
+  bottom:    ['#2f3a46','#4b5a3a','#6b5a46','#1f2a44','#8a8a8a','#2b2b2b','#7a2f2f','#c9b38a'],
+  bag:       ['#5b4a32','#3a4a5b','#4b5a3a','#8a3a2a','#2b2b2b','#c9b38a','#7a3d8a','#2f6f9a'],
 };
-const AV_KEYS = Object.keys(AV);
-const AV_DEFAULT = { skin:1, hair:0, hairColor:1, top:0, bottom:0, hat:0, bag:0 };
-const avValid = (a) => !!a && AV_KEYS.every(k => Number.isInteger(a[k]) && a[k] >= 0 && a[k] < (AV[k].c || AV[k].s).length);
+const AV_COLOR_NAMES = { skin:'피부', hairColor:'머리 색', top:'상의', bottom:'하의', bag:'가방' };
+const AV_HAIRS = ['짧은 머리', '긴 머리', '뾰족 머리'];
+const AV_SLOTS = { head:'머리', face:'얼굴', back:'등' };
+const SHOP_ITEMS = {                             // 이름·부위만 — 가격은 서버가 정한다 (GET /game/api/lastdrop/shop)
+  pumpkin:{ n:'할로윈 호박 모자', slot:'head' }, witch:{ n:'마녀 모자', slot:'head' }, beanie:{ n:'비니', slot:'head' },
+  cap:{ n:'캡', slot:'head' }, crown:{ n:'왕관', slot:'head' }, sunglasses:{ n:'선글라스', slot:'face' },
+  goggles:{ n:'고글', slot:'face' }, skull:{ n:'해골 가면', slot:'face' }, cape:{ n:'망토', slot:'back' }, scarf:{ n:'스카프', slot:'back' },
+};
+const AV_DEFAULT = { v:2, hair:0, skin:'#eec39a', hairColor:'#4a3020', top:'#b4552f', bottom:'#2f3a46', bag:'#5b4a32', head:null, face:null, back:null };
+const HEXC = /^#[0-9a-f]{6}$/;
+function avNormalize(a){                         // v1(프리셋 번호) → v2. 이상하면 기본값
+  if (!a || typeof a !== 'object') return { ...AV_DEFAULT };
+  if (a.v !== 2){
+    const pick = (k, i) => AV_PRESET[k][Number.isInteger(i) && i >= 0 && i < 8 ? i : 0];
+    return { ...AV_DEFAULT, hair: [0,1,2].includes(a.hair) ? a.hair : 0, skin:pick('skin', a.skin), hairColor:pick('hairColor', a.hairColor),
+             top:pick('top', a.top), bottom:pick('bottom', a.bottom), bag:pick('bag', a.bag) };   // 옛 무료 모자(캡·비니)는 상점으로 옮겼다
+  }
+  const o = { ...AV_DEFAULT };
+  if ([0,1,2].includes(a.hair)) o.hair = a.hair;
+  for (const k of Object.keys(AV_PRESET)) if (typeof a[k] === 'string' && HEXC.test(a[k])) o[k] = a[k];
+  for (const sl of Object.keys(AV_SLOTS)) o[sl] = SHOP_ITEMS[a[sl]] && SHOP_ITEMS[a[sl]].slot === sl ? a[sl] : null;
+  return o;
+}
+const hexN = (h) => parseInt(h.slice(1), 16);
 function avatarGeo(a){                           // 발이 원점, 앞이 +z
   const ps = [], m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3();
-  const put = (x, y, z, w, h, d, c) => { m.compose(new THREE.Vector3(x, y + h/2, z), q, s.set(w, h, d)); ps.push({ g:BOX, m:m.clone(), c }); };
-  const skin = AV.skin.c[a.skin], hc = AV.hairColor.c[a.hairColor], top = AV.top.c[a.top], bot = AV.bottom.c[a.bottom], bag = AV.bag.c[a.bag];
+  const put = (x, y, z, w, h, d, c, g) => { m.compose(new THREE.Vector3(x, y + h/2, z), q, s.set(w, h, d)); ps.push({ g:g || BOX, m:m.clone(), c }); };
+  const skin = hexN(a.skin), hc = hexN(a.hairColor), top = hexN(a.top), bot = hexN(a.bottom), bag = hexN(a.bag);
   put(-0.07, 0.06, 0, 0.12, 0.82, 0.2, bot); put(0.07, 0.06, 0, 0.12, 0.82, 0.2, bot);              // 다리
   put(-0.07, 0, 0.03, 0.13, 0.08, 0.26, 0x2a2622); put(0.07, 0, 0.03, 0.13, 0.08, 0.26, 0x2a2622);  // 신발
   put(0, 0.88, 0, 0.5, 0.6, 0.28, top);                                                              // 몸통
@@ -398,15 +417,35 @@ function avatarGeo(a){                           // 발이 원점, 앞이 +z
   put(-0.32, 0.88, 0, 0.11, 0.12, 0.12, skin); put(0.32, 0.88, 0, 0.11, 0.12, 0.12, skin);          // 손
   put(0, 1.48, 0, 0.12, 0.06, 0.12, skin); put(0, 1.54, 0, 0.28, 0.28, 0.28, skin);                 // 목 · 머리
   put(-0.06, 1.66, 0.141, 0.04, 0.04, 0.01, 0x1a1a1a); put(0.06, 1.66, 0.141, 0.04, 0.04, 0.01, 0x1a1a1a);   // 눈
-  if (a.hair === 0){ put(0, 1.80, 0, 0.3, 0.06, 0.3, hc); put(0, 1.62, -0.13, 0.3, 0.2, 0.05, hc); }
-  else if (a.hair === 1){ put(0, 1.80, 0, 0.3, 0.07, 0.3, hc); put(0, 1.36, -0.14, 0.32, 0.46, 0.06, hc);
+  const capped = a.head && a.head !== 'crown';   // 모자를 쓰면 정수리 머리카락은 모자에 가린다
+  if (a.hair === 0){ if (!capped) put(0, 1.80, 0, 0.3, 0.06, 0.3, hc); put(0, 1.62, -0.13, 0.3, 0.2, 0.05, hc); }
+  else if (a.hair === 1){ if (!capped) put(0, 1.80, 0, 0.3, 0.07, 0.3, hc); put(0, 1.36, -0.14, 0.32, 0.46, 0.06, hc);
     put(-0.145, 1.5, -0.01, 0.03, 0.3, 0.26, hc); put(0.145, 1.5, -0.01, 0.03, 0.3, 0.26, hc); }
-  else { put(0, 1.80, 0, 0.29, 0.05, 0.29, hc); for (let i = 0; i < 4; i++) put(0, 1.84, -0.11 + i*0.075, 0.07, 0.12 - Math.abs(i - 1.5)*0.02, 0.06, hc); }
-  if (a.hat === 1){ put(0, 1.79, 0, 0.31, 0.1, 0.31, 0x24324a); put(0, 1.79, 0.2, 0.27, 0.025, 0.14, 0x24324a); }        // 캡
-  else if (a.hat === 2){ put(0, 1.72, 0, 0.36, 0.2, 0.36, 0x4b5a3a); put(0, 1.70, 0.17, 0.3, 0.04, 0.06, 0x3d4a30); }    // 헬멧형
-  else if (a.hat === 3){ put(0, 1.76, 0, 0.31, 0.14, 0.31, 0xb03a3a); put(0, 1.9, 0, 0.08, 0.06, 0.08, 0xe8e4dc); }      // 비니
+  else { put(0, 1.80, 0, 0.29, 0.05, 0.29, hc); if (!capped) for (let i = 0; i < 4; i++) put(0, 1.84, -0.11 + i*0.075, 0.07, 0.12 - Math.abs(i - 1.5)*0.02, 0.06, hc); }
   put(0, 0.98, -0.24, 0.38, 0.44, 0.16, bag);                                                        // 가방
   put(-0.15, 0.95, 0.145, 0.05, 0.52, 0.02, bag); put(0.15, 0.95, 0.145, 0.05, 0.52, 0.02, bag);    // 멜빵
+  // ── 장식: 머리
+  if (a.head === 'pumpkin'){ put(0, 1.72, 0, 0.40, 0.30, 0.40, 0xe07a1f); put(-0.1, 1.72, 0, 0.03, 0.30, 0.41, 0xb85e12); put(0.1, 1.72, 0, 0.03, 0.30, 0.41, 0xb85e12);
+    put(0, 2.02, 0, 0.05, 0.08, 0.05, 0x3d6b2a); put(-0.07, 1.86, 0.2, 0.05, 0.04, 0.01, 0x2a1406); put(0.07, 1.86, 0.2, 0.05, 0.04, 0.01, 0x2a1406); }
+  else if (a.head === 'witch'){ put(0, 1.80, 0, 0.56, 0.03, 0.56, 0x1c1825); put(0, 1.83, 0, 0.31, 0.06, 0.31, 0x6a3d8a);
+    put(0, 1.83, 0, 0.17, 0.46, 0.17, 0x1c1825, CONE); }
+  else if (a.head === 'beanie'){ put(0, 1.76, 0, 0.31, 0.14, 0.31, 0xb03a3a); put(0, 1.9, 0, 0.08, 0.06, 0.08, 0xe8e4dc); }
+  else if (a.head === 'cap'){ put(0, 1.79, 0, 0.31, 0.1, 0.31, 0x24324a); put(0, 1.79, 0.2, 0.27, 0.025, 0.14, 0x24324a); }
+  else if (a.head === 'crown'){ put(0, 1.82, 0, 0.30, 0.07, 0.30, 0xe6b52e);
+    for (const [x, z] of [[-0.12,-0.12],[0.12,-0.12],[-0.12,0.12],[0.12,0.12],[0,0.13],[0,-0.13],[0.13,0],[-0.13,0]]) put(x, 1.89, z, 0.05, 0.07, 0.05, 0xe6b52e);
+    put(0, 1.83, 0.152, 0.05, 0.04, 0.01, 0xc4202e); }
+  // ── 장식: 얼굴
+  if (a.face === 'sunglasses'){ put(0, 1.655, 0.148, 0.29, 0.025, 0.01, 0x111111); put(-0.065, 1.63, 0.15, 0.1, 0.06, 0.012, 0x0c0c10); put(0.065, 1.63, 0.15, 0.1, 0.06, 0.012, 0x0c0c10); }
+  else if (a.face === 'goggles'){ put(0, 1.645, 0, 0.30, 0.04, 0.30, 0x3a3a3a);
+    put(-0.065, 1.625, 0.15, 0.1, 0.08, 0.04, 0x5a5a5a); put(0.065, 1.625, 0.15, 0.1, 0.08, 0.04, 0x5a5a5a);
+    put(-0.065, 1.635, 0.171, 0.07, 0.055, 0.005, 0x4fb3c8); put(0.065, 1.635, 0.171, 0.07, 0.055, 0.005, 0x4fb3c8); }
+  else if (a.face === 'skull'){ put(0, 1.55, 0.145, 0.29, 0.26, 0.03, 0xeae6da);
+    put(-0.065, 1.65, 0.161, 0.07, 0.065, 0.005, 0x141414); put(0.065, 1.65, 0.161, 0.07, 0.065, 0.005, 0x141414);
+    put(0, 1.60, 0.161, 0.035, 0.035, 0.005, 0x141414); for (let i = -2; i <= 2; i++) put(i*0.04, 1.565, 0.161, 0.025, 0.025, 0.005, 0x141414); }
+  // ── 장식: 등
+  if (a.back === 'cape'){ put(0, 0.55, -0.35, 0.50, 0.92, 0.03, 0xa3242e); put(0, 1.44, -0.2, 0.46, 0.06, 0.2, 0xa3242e); }
+  else if (a.back === 'scarf'){ put(0, 1.42, 0, 0.34, 0.08, 0.34, 0x2f6f9a); put(0.08, 1.04, -0.17, 0.08, 0.38, 0.03, 0x2f6f9a);
+    put(0.08, 1.04, -0.185, 0.081, 0.03, 0.005, 0xe8e4dc); put(0.08, 1.2, -0.185, 0.081, 0.03, 0.005, 0xe8e4dc); }
   return merge(ps);
 }
 function spawnPoint(i){
@@ -708,20 +747,105 @@ function buildCars(){
     }
     const mesh = new THREE.Mesh(geo, SOLID);
     scene.add(mesh);
-    cars.push({ x, z, y:heightAt(x,z), yaw:rh(i,93,SEED)*6.283, spd:0, mesh });
+    cars.push({ x, z, y:heightAt(x,z), yaw:rh(i,93,SEED)*6.283, spd:0, mesh, hp:CAR.hp, dead:false, boomAt:0, fire:null, killer:null });
+  }
+}
+// ══ 지프 파괴 (29 문서) ══════════════════════════════════════
+// 체력 400. 총알은 사람보다 먼저 차체(회전된 상자, 탑승자 머리까지)에 걸린다 — 멀쩡한 동안 탑승자는 안 맞는다.
+// 0 이 되면 불타는 잔해(못 움직임, 엄폐물) + 탑승자 강제 하차·피해 30, 2.5초 뒤 폭발(반경 6m, 최대 60).
+const CAR = { hp:400, hx:1.15, hy:0.82, hz:2.2, cy:1.13, ejectDmg:30, boomDelay:2.5, boomR:6, boomDmg:60 };
+const WRECK_MAT = new THREE.MeshStandardMaterial({ color:0x1d1b19, roughness:1, flatShading:true });
+const FIRE_MAT = new THREE.MeshBasicMaterial({ color:0xff7a1a, transparent:true, opacity:0.85 });
+const sMetal = () => { nz(3200, 2.2, 0.18, 0.06, 'bandpass'); tone(1900, 1300, 0.07, 0.06, 'square'); };
+// 광선이 차 c 의 상자에 처음 닿는 거리 (없으면 -1). 차의 x축 = (cos, 0, -sin), z축 = (sin, 0, cos)
+function rayCar(c, ox, oy, oz, dx, dy, dz, maxT){
+  const cs = Math.cos(c.yaw), sn = Math.sin(c.yaw);
+  const px = ox - c.x, py = oy - (c.y + CAR.cy), pz = oz - c.z;
+  const o = [px*cs - pz*sn, py, px*sn + pz*cs], d = [dx*cs - dz*sn, dy, dx*sn + dz*cs], h = [CAR.hx, CAR.hy, CAR.hz];
+  let t0 = 0, t1 = maxT;
+  for (let k = 0; k < 3; k++){
+    if (Math.abs(d[k]) < 1e-9){ if (Math.abs(o[k]) > h[k]) return -1; continue; }
+    let a = (-h[k] - o[k]) / d[k], b = (h[k] - o[k]) / d[k];
+    if (a > b){ const t = a; a = b; b = t; }
+    if (a > t0) t0 = a; if (b < t1) t1 = b;
+    if (t0 > t1) return -1;
+  }
+  return t0 > 0.05 ? t0 : -1;
+}
+function rayCars(ox, oy, oz, dx, dy, dz, maxT, shooter){
+  let hit = null, best = maxT;
+  for (const c of cars){
+    if (shooter === me() && c === riding) continue;
+    if (Math.hypot(c.x - ox, c.z - oz) > best + 5) continue;
+    const t = rayCar(c, ox, oy, oz, dx, dy, dz, best);
+    if (t > 0 && t < best){ best = t; hit = { c, t }; }
+  }
+  return hit;
+}
+function damageCar(c, dmg, by){
+  if (c.dead) return;
+  c.hp -= dmg;
+  if (c.hp <= 0){ c.hp = 0; destroyCar(c, by); }
+}
+function destroyCar(c, by){
+  c.dead = true; c.spd = 0; c.killer = by || null; c.boomAt = elapsed + CAR.boomDelay;
+  c.mesh.material = WRECK_MAT;
+  c.fire = new THREE.Group();
+  for (let i = 0; i < 5; i++){
+    const f = new THREE.Mesh(BOX, FIRE_MAT);
+    f.position.set((i % 2 ? 0.5 : -0.5) * (i % 3 ? 1 : 0.3), 1.7, -1.6 + i * 0.8); f.scale.set(0.5, 0.7, 0.5);
+    c.fire.add(f);
+  }
+  c.fire.position.set(c.x, c.y, c.z); c.fire.rotation.y = c.yaw; scene.add(c.fire);
+  // 잔해는 엄폐물 — 회전된 차체를 감싸는 상자로 이동·총알을 막는다
+  const cs = Math.abs(Math.cos(c.yaw)), sn = Math.abs(Math.sin(c.yaw));
+  addCol(c.x, c.y, c.z, cs*1.0 + sn*2.15, 1.65, sn*1.0 + cs*2.15);
+  c.col = cols[cols.length - 1];
+  sBoom(Math.hypot(c.x - me().x, c.z - me().z) + 40);
+  if (c === riding){                             // 탑승자 강제 하차 + 피해
+    toggleRide();
+    feed('<s>지프 파괴</s> 강제 하차');
+    hurt(me(), CAR.ejectDmg, by, null, '지프 파괴');
+  } else if (Math.hypot(c.x - me().x, c.z - me().z) < 80) feed('<i>지프가 불탄다 — 곧 터진다</i>');
+}
+function explodeCar(c){
+  c.boomAt = -1;
+  const bx = c.x, by = c.y + 0.8, bz = c.z;
+  fx(bx, by + 0.6, bz, 6, 0.5, false); fx(bx, by + 1.6, bz, 4, 0.7, false);
+  sBoom(Math.hypot(bx - me().x, bz - me().z));
+  const ci = cols.indexOf(c.col); if (ci >= 0) cols.splice(ci, 1);   // 시야 검사 동안 잔해 자신은 뺀다
+  for (const e of ents){
+    if (!e.alive || e.drop === 'plane') continue;
+    const d = Math.hypot(e.x - bx, (e.y + 0.9) - by, e.z - bz);
+    if (d >= CAR.boomR) continue;
+    const L = d || 1, dx = (e.x - bx)/L, dy = (e.y + 0.9 - by)/L, dz = (e.z - bz)/L;
+    if (d > 0.5 && rayWorld(bx, by, bz, dx, dy, dz, d) < d - 0.3) continue;   // 사이에 벽이 있으면 막힌다
+    hurt(e, CAR.boomDmg * (1 - d / CAR.boomR), c.killer, null, '지프 폭발');
+  }
+  if (c.col) cols.push(c.col);
+}
+function updateWrecks(){
+  for (const c of cars){
+    if (!c.dead) continue;
+    if (c.boomAt > 0 && elapsed >= c.boomAt) explodeCar(c);
+    if (c.fire){ const k = performance.now() * 0.012;
+      c.fire.children.forEach((f, i) => { f.scale.y = 0.5 + 0.35 * Math.abs(Math.sin(k + i * 1.7)); f.position.y = 1.55 + f.scale.y * 0.4; }); }
   }
 }
 function nearCar(){
   const p = me();
   let best = null, bd = 4.2;
   for (const c of cars){
+    if (c.dead) continue;                          // 잔해는 못 탄다
     const d = Math.hypot(c.x-p.x, c.z-p.z);
     if (d < bd){ bd = d; best = c; }
   }
   return best;
 }
 function updateCars(dt){
+  updateWrecks();
   for (const c of cars){
+    if (c.dead) continue;                          // 잔해는 그 자리에
     if (c === riding){
       let th = 0, stw = 0;
       if (keys.KeyW) th += 1;
@@ -1017,6 +1141,7 @@ function rayEnts(ox,oy,oz,dx,dy,dz,maxT,skip){
   let hit = null, best = maxT;
   for (const e of ents){
     if (!e.alive || e === skip || e.drop === 'plane') continue;   // 비행기 안은 못 맞힌다
+    if (e === me() && riding && !riding.dead) continue;           // 멀쩡한 지프 안 — 차체가 막아 준다 (29 문서)
     if (Math.hypot(e.x-ox, e.z-oz) > best + 3) continue;
     for (const p of PARTS){
       let t0=0, t1=best;
@@ -1119,11 +1244,16 @@ function fireFrom(e, dirX, dirY, dirZ){
     const L = Math.hypot(dx,dy,dz); dx/=L; dy/=L; dz/=L;
     const maxT = g.fly;
     const w = rayWorld(ox,oy,oz,dx,dy,dz,maxT);
-    const h = rayEnts(ox,oy,oz,dx,dy,dz,w,e);
-    const t = h ? h.t : w;
+    const ch = rayCars(ox,oy,oz,dx,dy,dz,w,e);      // 지프 차체가 사람보다 먼저 막는다 (29 문서)
+    const h = rayEnts(ox,oy,oz,dx,dy,dz, ch ? ch.t : w, e);
+    const t = h ? h.t : ch ? ch.t : w;
     if (e === me() || far === false) tracer(ox,oy,oz, ox+dx*t, oy+dy*t, oz+dz*t);
     const dm = h ? g.dmg * h.p.m * rangeMul(g, t) : 0;
-    if (h && dm > 0 && hurt(h.e, dm, e, h.p, g.n)){   // 피·히트마커·명중 집계는 피해가 들어갔을 때만
+    if (!h && ch){                                  // 지프에 맞았다 — 금속 소리·불꽃, 체력이 깎인다 (잔해는 막기만)
+      if (!ch.c.dead) damageCar(ch.c, g.dmg * rangeMul(g, t), e);
+      fx(ox+dx*t, oy+dy*t, oz+dz*t, 0.4, 0.12, false);
+      if (Math.hypot(ch.c.x - me().x, ch.c.z - me().z) < 70) sMetal();
+    } else if (h && dm > 0 && hurt(h.e, dm, e, h.p, g.n)){   // 피·히트마커·명중 집계는 피해가 들어갔을 때만
       fx(ox+dx*t, oy+dy*t, oz+dz*t, 0.3, 0.16, true);
       if (e === me()){ hits++; hitT = 0.13; }
     } else fx(ox+dx*t, oy+dy*t, oz+dz*t, 0.25, 0.18, false);
@@ -1540,9 +1670,10 @@ function updateBot(b, dt){
         b.cd = g.rate * (g.auto ? 1 : 1.3) + (b.burst-- > 0 ? 0 : rnd(T.rest));
         if (b.burst <= 0){ b.burst = 2 + ((Math.random()*4)|0); rollAim(b); }
         const t = b.target, sh = STANCE[t.st].h;
+        const car = t === me() && riding && !riding.dead && T.move >= 4 ? riding : null;   // 어려움 이상 — 탄 사람이면 지프부터
         // 조준점 — 몸통(하드코어는 가끔 머리) + 거리에 비례한 가로·세로 오차
-        const ty = t.y + (b.aimHead ? 1.66 : 1.15)*sh + (Math.random()-0.5)*0.5 + b.aimY*d*T.aim;
-        let dx = t.x - b.x, dz = t.z - b.z;
+        const ty = (car ? car.y + 1.0 : t.y + (b.aimHead ? 1.66 : 1.15)*sh) + (Math.random()-0.5)*0.5 + b.aimY*d*T.aim;
+        let dx = (car ? car.x : t.x) - b.x, dz = (car ? car.z : t.z) - b.z;
         const hl = Math.hypot(dx, dz) || 1, ox = b.aimX*d*T.aim;
         const px = -dz/hl, pz = dx/hl;          // 표적을 보는 방향의 옆
         dx += px*ox; dz += pz*ox;
@@ -2091,7 +2222,7 @@ function hudGun(){
   hpBar.classList.toggle('low', p.hp < 35);
   vitL.textContent = 'HP ' + Math.max(0, Math.round(p.hp))
     + (p.boost > 0 ? '  부스트 ' + Math.round(p.boost) : '')
-    + '   ' + (riding ? '지프' : STANCE[p.st].n)
+    + '   ' + (riding ? '지프 ' + Math.ceil(riding.hp) + '/' + CAR.hp : STANCE[p.st].n)
     + '   처치 ' + kills + '   명중 ' + (shots ? Math.round(hits/shots*100) : 0) + '%';
 }
 function drawMap(){
@@ -2168,6 +2299,7 @@ function finish(won){
   pauseEl.hidden = true;
   playBtn.disabled = false;
   endAt = performance.now() + 2800; endWon = !!won;   // 2.8초 동안 내 캐릭터를 비추고 결과 화면 (updateMyView)
+  panel(null); matchEnd(placed);                 // 결과를 서버에 — 코인은 서버가 계산
   if (won) sKill(); else sHurt();
 }
 
@@ -2377,11 +2509,14 @@ let elapsed = 0;
 // /game/api/me 로 로그인을 확인한다. 로그인 → 내 캐릭터 미리보기 · [게임 시작] [꾸미기] [로그아웃].
 // 아니면 로그인 안내 + '로그인 없이 하기'(게스트 — 꾸미기·기록 저장 안 됨). 계정 서버에 못 닿으면 게스트로.
 // 화면에 넣는 글자는 전부 textContent 다.
-const acct = { user:null, csrf:null, guest:false, online:true, avatar:{ ...AV_DEFAULT }, saved:{ ...AV_DEFAULT } };
-const authEl = document.getElementById('auth'), homeMain = document.getElementById('homeMain');
-const nickEl = document.getElementById('nick'), nickSub = document.getElementById('nickSub');
-const dressBtn = document.getElementById('dressBtn'), outBtn = document.getElementById('outBtn');
-const dressEl = document.getElementById('dress'), dressRows = document.getElementById('dressRows'), homeMsg = document.getElementById('homeMsg');
+const acct = { user:null, csrf:null, guest:false, online:true, avatar:{ ...AV_DEFAULT }, saved:{ ...AV_DEFAULT },
+               coins:0, owned:new Set(), stats:null, match:null };
+const $id = (id) => document.getElementById(id);
+const authEl = $id('auth'), homeMain = $id('homeMain'), nickEl = $id('nick'), nickSub = $id('nickSub');
+const dressBtn = $id('dressBtn'), outBtn = $id('outBtn'), shopBtn = $id('shopBtn'), recBtn = $id('recBtn');
+const dressEl = $id('dress'), dressRows = $id('dressRows'), homeMsg = $id('homeMsg');
+const shopEl = $id('shop'), shopRows = $id('shopRows'), recEl = $id('rec'), recBody = $id('recBody');
+const chickenEl = $id('chicken'), coinEl = $id('coins'), coinMsg = $id('coinMsg');
 async function api(path, opt = {}){
   const h = { 'Content-Type':'application/json' };
   if (opt.csrf) h['X-CSRF-Token'] = acct.csrf || '';
@@ -2395,61 +2530,170 @@ function guestFlag(v){
         if (v) sessionStorage.setItem('vtg_guest', '1'); else sessionStorage.removeItem('vtg_guest'); } catch (e) {}
   return false;
 }
+async function loadAccount(){                    // 전적·코인·보유 장식 — 서버 값만 쓴다
+  try { const r = await api('lastdrop/stats'); if (r.ok && r.j){ acct.stats = r.j; acct.coins = r.j.coins; } } catch (e) {}
+  try { const r = await api('lastdrop/shop'); if (r.ok && r.j){ acct.shop = r.j.items; acct.coins = r.j.coins;
+        acct.owned = new Set(r.j.items.filter(i => i.owned).map(i => i.id)); } } catch (e) {}
+  showHeader();
+}
 async function initHome(){
   let me = null;
   try { const r = await api('me'); if (r.ok && r.j) me = r.j; else acct.online = false; } catch (e) { acct.online = false; }
   if (me && me.user){
     acct.user = me.user; acct.csrf = me.csrf;
-    try { const r = await api('lastdrop/avatar'); if (r.ok && r.j && avValid(r.j.avatar)) acct.avatar = { ...r.j.avatar }; } catch (e) {}
+    try { const r = await api('lastdrop/avatar'); if (r.ok && r.j && r.j.avatar) acct.avatar = avNormalize(r.j.avatar); } catch (e) {}
+    await loadAccount();
   } else acct.guest = guestFlag() || !acct.online;
   acct.saved = { ...acct.avatar };
   showHome();
+}
+function showHeader(){
+  const st = acct.stats;
+  chickenEl.textContent = acct.user ? '치킨 ' + (st ? st.wins : 0) + '회 · 승률 ' + (st ? st.winRate : 0) + '%' : '';
+  coinEl.textContent = acct.user ? '보유 코인 ' + acct.coins : '';
 }
 function showHome(){
   const signed = !!acct.user, inn = signed || acct.guest;
   authEl.hidden = inn; homeMain.hidden = !inn;
   nickEl.textContent = signed ? acct.user.nickname : '게스트';
-  nickSub.textContent = signed ? '' : acct.online ? '꾸미기·기록이 저장되지 않는다' : '계정 서버에 닿지 않는다 — 게스트로 한다';
+  nickSub.textContent = signed ? '' : acct.online ? '꾸미기·기록·코인이 저장되지 않는다' : '계정 서버에 닿지 않는다 — 게스트로 한다';
   outBtn.textContent = signed ? '로그아웃' : '로그인';
+  shopBtn.hidden = recBtn.hidden = !signed;       // 게스트는 상점·기록 없음
+  showHeader();
   setAvatar(acct.avatar);
 }
-document.getElementById('guestBtn').addEventListener('click', () => { guestFlag(true); acct.guest = true; showHome(); });
+function panel(which){                           // 꾸미기 · 상점 · 기록 — 하나만 연다
+  dressEl.hidden = which !== 'dress'; shopEl.hidden = which !== 'shop'; recEl.hidden = which !== 'rec';
+  homeMsg.textContent = '';
+}
+$id('guestBtn').addEventListener('click', () => { guestFlag(true); acct.guest = true; showHome(); });
 outBtn.addEventListener('click', async () => {
   if (acct.user){ try { await api('logout', { method:'POST', csrf:true }); } catch (e) {} }
   guestFlag(false);
   location.href = '/game/?next=/game/lastdrop/';
 });
-// 꾸미기 — 항목마다 프리셋 버튼. 바꾸면 미리보기에 바로, [저장] 하면 서버에
+const el2 = (tag, cls, text) => { const d = document.createElement(tag); if (cls) d.className = cls; if (text !== undefined) d.textContent = text; return d; };
+// ── 꾸미기: 색은 빠른 칸 + 자유 색 선택기(무료), 머리 모양, 부위별 장식(가진 것만)
 function buildDress(){
-  dressRows.replaceChildren(...AV_KEYS.map(k => {
-    const row = document.createElement('div'); row.className = 'drow';
-    const lb = document.createElement('span'); lb.textContent = AV[k].n; row.appendChild(lb);
-    const opts = document.createElement('div'); opts.className = 'dopts';
-    (AV[k].c || AV[k].s).forEach((v, i) => {
-      const b = document.createElement('button'); b.type = 'button';
-      if (AV[k].c){ b.className = 'sw'; b.style.background = '#' + v.toString(16).padStart(6, '0'); b.title = AV[k].n + ' ' + (i + 1); }
-      else { b.className = 'opt'; b.textContent = v; }
-      if (acct.avatar[k] === i) b.classList.add('on');
-      b.addEventListener('click', () => { acct.avatar[k] = i; setAvatar(acct.avatar); buildDress(); });
+  const rows = [];
+  for (const k of Object.keys(AV_PRESET)){
+    const row = el2('div', 'drow'); row.appendChild(el2('span', '', AV_COLOR_NAMES[k]));
+    const opts = el2('div', 'dopts');
+    AV_PRESET[k].forEach(hex => {
+      const b = el2('button', 'sw' + (acct.avatar[k] === hex ? ' on' : '')); b.type = 'button'; b.style.background = hex; b.title = hex;
+      b.addEventListener('click', () => { acct.avatar[k] = hex; setAvatar(acct.avatar); buildDress(); });
       opts.appendChild(b);
     });
-    row.appendChild(opts);
-    return row;
-  }));
+    const pick = document.createElement('input'); pick.type = 'color'; pick.value = acct.avatar[k]; pick.title = AV_COLOR_NAMES[k] + ' — 자유 색';
+    pick.setAttribute('aria-label', AV_COLOR_NAMES[k] + ' 자유 색');
+    if (!AV_PRESET[k].includes(acct.avatar[k])) pick.classList.add('on');
+    pick.addEventListener('input', () => { acct.avatar[k] = pick.value.toLowerCase(); setAvatar(acct.avatar); });
+    opts.appendChild(pick);
+    row.appendChild(opts); rows.push(row);
+  }
+  const hr = el2('div', 'drow'); hr.appendChild(el2('span', '', '머리 모양'));
+  const ho = el2('div', 'dopts');
+  AV_HAIRS.forEach((n, i) => { const b = el2('button', 'opt' + (acct.avatar.hair === i ? ' on' : ''), n); b.type = 'button';
+    b.addEventListener('click', () => { acct.avatar.hair = i; setAvatar(acct.avatar); buildDress(); }); ho.appendChild(b); });
+  hr.appendChild(ho); rows.push(hr);
+  for (const [sl, nm] of Object.entries(AV_SLOTS)){
+    const row = el2('div', 'drow'); row.appendChild(el2('span', '', nm));
+    const opts = el2('div', 'dopts');
+    const mine = Object.keys(SHOP_ITEMS).filter(id => SHOP_ITEMS[id].slot === sl && acct.owned.has(id));
+    [null, ...mine].forEach(id => {
+      const b = el2('button', 'opt' + (acct.avatar[sl] === id ? ' on' : ''), id ? SHOP_ITEMS[id].n : '없음'); b.type = 'button';
+      b.addEventListener('click', () => { acct.avatar[sl] = id; setAvatar(acct.avatar); buildDress(); });
+      opts.appendChild(b);
+    });
+    if (!mine.length) opts.appendChild(el2('i', 'dim', acct.user ? '상점에서 살 수 있다' : '로그인하면 상점'));
+    row.appendChild(opts); rows.push(row);
+  }
+  dressRows.replaceChildren(...rows);
 }
-dressBtn.addEventListener('click', () => { dressEl.hidden = false; homeMsg.textContent = ''; buildDress(); });
-document.getElementById('cancelBtn').addEventListener('click', () => {
-  acct.avatar = { ...acct.saved }; setAvatar(acct.avatar); dressEl.hidden = true;
-});
-document.getElementById('saveBtn').addEventListener('click', async () => {
-  if (!acct.user){ acct.saved = { ...acct.avatar }; dressEl.hidden = true; homeMsg.textContent = '게스트는 저장되지 않는다 — 이번 접속에서만'; return; }
-  homeMsg.textContent = '저장 중…';
+dressBtn.addEventListener('click', () => { panel('dress'); buildDress(); });
+$id('cancelBtn').addEventListener('click', () => { acct.avatar = { ...acct.saved }; setAvatar(acct.avatar); panel(null); });
+async function saveAvatar(){
+  if (!acct.user){ acct.saved = { ...acct.avatar }; return '게스트는 저장되지 않는다 — 이번 접속에서만'; }
   try {
     const r = await api('lastdrop/avatar', { method:'PUT', csrf:true, body:{ avatar:acct.avatar } });
-    if (r.ok){ acct.saved = { ...acct.avatar }; dressEl.hidden = true; homeMsg.textContent = '저장했다'; }
-    else homeMsg.textContent = (r.j && r.j.error) || '저장하지 못했다';
-  } catch (e) { homeMsg.textContent = '저장하지 못했다 — 연결을 확인해라'; }
+    if (r.ok){ acct.avatar = avNormalize(r.j.avatar); acct.saved = { ...acct.avatar }; return '저장했다'; }
+    return (r.j && r.j.error) || '저장하지 못했다';
+  } catch (e) { return '저장하지 못했다 — 연결을 확인해라'; }
+}
+$id('saveBtn').addEventListener('click', async () => {
+  homeMsg.textContent = '저장 중…';
+  const m = await saveAvatar(); if (m === '저장했다' || !acct.user) panel(null); homeMsg.textContent = m;
 });
+// ── 상점: 코인으로 장식을 산다. 줄을 누르면 미리 써 본다, [구매] 는 한 번 더 눌러 확인
+function buildShop(){
+  const rows = [el2('div', 'shead', '보유 코인 ' + acct.coins)];
+  for (const it of acct.shop || []){
+    const row = el2('div', 'srow' + (acct.avatar[it.slot] === it.id ? ' on' : ''));
+    row.appendChild(el2('span', '', it.name)); row.appendChild(el2('i', '', AV_SLOTS[it.slot]));
+    const b = el2('button', it.owned ? 'own' : 'buy', it.owned ? (acct.saved[it.slot] === it.id ? '장착 중' : '장착') : it.price + ' 코인');
+    b.type = 'button';
+    b.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (it.owned){ acct.avatar = { ...acct.saved, [it.slot]:it.id }; setAvatar(acct.avatar); homeMsg.textContent = await saveAvatar(); buildShop(); return; }
+      if (b.dataset.sure !== '1'){ b.dataset.sure = '1'; b.textContent = it.price + ' 코인 — 확인'; return; }
+      b.disabled = true;
+      const r = await api('lastdrop/shop/buy', { method:'POST', csrf:true, body:{ item:it.id } }).catch(() => null);
+      if (r && r.ok){ homeMsg.textContent = it.name + ' 샀다 — [장착] 을 누르면 쓴다'; await loadAccount(); }
+      else homeMsg.textContent = (r && r.j && r.j.error) || '사지 못했다';
+      buildShop();
+    });
+    row.appendChild(b);
+    row.addEventListener('click', () => { acct.avatar = { ...acct.saved, [it.slot]:it.id }; setAvatar(acct.avatar); buildShop(); });   // 미리 써 보기
+    rows.push(row);
+  }
+  shopRows.replaceChildren(...rows);
+}
+shopBtn.addEventListener('click', async () => { panel('shop'); await loadAccount(); buildShop(); });
+$id('shopClose').addEventListener('click', () => { acct.avatar = { ...acct.saved }; setAvatar(acct.avatar); panel(null); });
+// ── 기록
+function buildRec(){
+  const st = acct.stats || { games:0, wins:0, winRate:0, top4:0, avgPlace:null, kills:0, maxKills:0, accuracy:0, recent:[] };
+  const grid = el2('div', 'rgrid');
+  for (const [k, v] of [['판수', st.games], ['치킨', st.wins], ['승률', st.winRate + '%'], ['Top 4', st.top4],
+                        ['평균 순위', st.avgPlace === null ? '—' : st.avgPlace], ['총 킬', st.kills], ['최다 킬', st.maxKills], ['명중률', st.accuracy + '%']]){
+    const c = el2('div', 'rc'); c.appendChild(el2('b', '', String(v))); c.appendChild(el2('span', '', k)); grid.appendChild(c);
+  }
+  const list = el2('div', 'rlist');
+  list.appendChild(el2('div', 'rh', '최근 10판'));
+  if (!st.recent.length) list.appendChild(el2('div', 'dim', '아직 기록이 없다'));
+  for (const m of st.recent){
+    const d = new Date(m.ts * 1000), row = el2('div', 'rr');
+    const pad = (n) => String(n).padStart(2, '0');
+    row.appendChild(el2('span', '', (d.getMonth() + 1) + '/' + d.getDate() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes())));
+    row.appendChild(el2('b', m.place === 1 ? 'win' : '', m.place === 1 ? '치킨' : '#' + m.place));
+    row.appendChild(el2('span', '', m.kills + '킬'));
+    row.appendChild(el2('span', '', Math.floor(m.survival / 60) + ':' + pad(Math.floor(m.survival % 60))));
+    list.appendChild(row);
+  }
+  recBody.replaceChildren(grid, list);
+}
+recBtn.addEventListener('click', async () => { panel('rec'); await loadAccount(); buildRec(); });
+$id('recClose').addEventListener('click', () => panel(null));
+// ── 판: 시작 때 서버에서 일회용 매치 토큰, 끝나면 토큰 + 결과를 내고 코인은 서버가 계산한다
+let matchStartedAt = 0;
+function matchBegin(){
+  matchStartedAt = performance.now(); acct.match = null;
+  if (!acct.user) return;
+  acct.match = api('lastdrop/match/start', { method:'POST', csrf:true }).then(r => r.ok && r.j ? r.j.token : null).catch(() => null);
+}
+async function matchEnd(place){
+  coinMsg.textContent = '';
+  if (!acct.user){ coinMsg.textContent = acct.online ? '로그인하면 코인과 기록이 저장된다' : ''; return; }
+  const tok = acct.match ? await acct.match : null;
+  if (!tok){ coinMsg.textContent = '기록하지 못했다 — 계정 서버에 닿지 않았다'; return; }
+  const body = { token:tok, place, kills, shots, hits, survival: Math.round((performance.now() - matchStartedAt) / 100) / 10 };
+  try {
+    const r = await api('lastdrop/match/end', { method:'POST', csrf:true, body });
+    if (r.ok){ coinMsg.textContent = r.j.coins ? '+' + r.j.coins + ' 코인' : (r.j.why === 'hourly_cap' ? '기록했다 — 시간당 12판이 넘어 코인 없음' : '기록했다 · 코인 없음 (4등 안에 들면 코인)');
+               coinMsg.classList.toggle('got', !!r.j.coins); await loadAccount(); }
+    else coinMsg.textContent = '기록되지 않았다 — ' + ((r.j && r.j.error) || r.status);
+  } catch (e) { coinMsg.textContent = '기록하지 못했다 — 연결을 확인해라'; }
+}
 // 미리보기 — 홈·결과 화면에서만 그린다. 천천히 돌고, 끌면 돌린다
 const pvCanvas = document.getElementById('pv');
 const pvR = new THREE.WebGLRenderer({ canvas:pvCanvas, antialias:true, alpha:true });
@@ -2460,7 +2704,7 @@ const pvSun = new THREE.DirectionalLight(0xffffff, 1.5); pvSun.position.set(2, 4
 const pvCam = new THREE.PerspectiveCamera(30, 1, 0.1, 20); pvCam.position.set(0, 1.2, 4.4); pvCam.lookAt(0, 0.95, 0);
 let pvMesh = null, pvYaw = 0.6, pvDrag = null, myAvatar = null, myChute = null;
 function setAvatar(a){
-  if (!avValid(a)) a = AV_DEFAULT;
+  a = avNormalize(a);
   if (pvMesh){ pvMesh.geometry.dispose(); pvMesh.geometry = avatarGeo(a); }
   else { pvMesh = new THREE.Mesh(avatarGeo(a), BOT_MAT); pvScene.add(pvMesh); }
   if (myAvatar){ myAvatar.geometry.dispose(); myAvatar.geometry = avatarGeo(a); }
@@ -2539,6 +2783,7 @@ function start(){
   hudEl.hidden = false;
   if (over) { location.reload(); return; }     // 다음 판은 새 섬에서
   playing = true;
+  matchBegin();                                  // 로그인이면 서버에서 매치 토큰 (29 문서)
   feed('<i>수송기 — Space 로 이탈한다</i>');
   lockMouse();
 }
