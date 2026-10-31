@@ -125,13 +125,12 @@ body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
 /* 홈 화면 (30 문서) — 노을 배경 위 반투명 어두운 패널로 글자 대비 */
 #home3d{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab}
 #home3d:active{cursor:grabbing}
-#topbar{position:absolute;left:0;right:0;top:0;height:52px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;
+#topbar{position:absolute;left:0;right:0;top:0;height:52px;display:grid;grid-template-columns:1fr auto;align-items:center;gap:12px;
   padding:0 max(16px,env(safe-area-inset-right,0px)) 0 max(16px,env(safe-area-inset-left,0px));
   background:rgba(14,10,12,.66);border-bottom:1px solid rgba(255,255,255,.08);backdrop-filter:blur(6px)}
 .tb-l{display:flex;gap:10px;align-items:baseline;min-width:0;white-space:nowrap;overflow:hidden}
 .tb-l b{font-size:16px;color:#fff;overflow:hidden;text-overflow:ellipsis}
 #level{font-family:var(--f-mono);font-size:12px;color:var(--amber)}
-.tb-c{font-family:var(--f-dis);font-weight:900;font-size:18px;color:#fff;white-space:nowrap}
 .tb-r{display:flex;gap:8px;justify-content:flex-end;align-items:center;white-space:nowrap}
 #coins{font-family:var(--f-mono);font-size:13px;color:var(--amber);margin-right:4px}
 .tb-r button,#tabs button{font:inherit;font-size:13px;color:var(--ink);background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
@@ -173,7 +172,7 @@ button.link{font:inherit;font-size:12px;color:var(--dim);background:none;border:
 .dopts .opt.on{border-color:var(--amber);color:var(--amber)}
 #homeMsg{font-size:12px;color:var(--amber);min-height:1em}
 /* 전적·코인·상점·기록 (29 문서) */
-#coins:empty,#coinMsg:empty{display:none}   /* #chicken 은 비어도 상단 바 가운데 칸 자리를 지킨다 */
+#coins:empty,#coinMsg:empty{display:none}
 #coinMsg{font-family:var(--f-mono);font-size:13px;color:var(--dim)}
 #coinMsg.got{font-size:22px;font-weight:700;color:var(--amber)}
 .btns.sm{flex-wrap:wrap}
@@ -291,7 +290,6 @@ button.link{font:inherit;font-size:12px;color:var(--dim);background:none;border:
     <canvas id="home3d" aria-label="내 캐릭터 — 끌어서 돌리기"></canvas>
     <header id="topbar">
       <div class="tb-l"><b id="nick">…</b><span id="level"></span></div>
-      <div class="tb-c" id="chicken"></div>
       <div class="tb-r"><span id="coins"></span><button type="button" id="setBtn">설정</button><button type="button" id="outBtn">로그아웃</button></div>
     </header>
     <nav id="tabs" role="tablist">

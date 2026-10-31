@@ -2515,7 +2515,7 @@ const authEl = $id('auth'), nickEl = $id('nick'), levelEl = $id('level'), tabsEl
 const dressBtn = $id('dressBtn'), outBtn = $id('outBtn'), shopBtn = $id('shopBtn'), recBtn = $id('recBtn'), setBtn = $id('setBtn');
 const dressEl = $id('dress'), dressRows = $id('dressRows'), homeMsg = $id('homeMsg');
 const shopEl = $id('shop'), shopRows = $id('shopRows'), recEl = $id('rec'), recBody = $id('recBody');
-const chickenEl = $id('chicken'), coinEl = $id('coins'), coinMsg = $id('coinMsg');
+const coinEl = $id('coins'), coinMsg = $id('coinMsg');   // 승률은 [기록] 에서만 (30 검토 — 상단 바엔 없다)
 const TABS = { home:$id('tabHome'), dress:dressEl, shop:shopEl, rec:recEl, settings:$id('settings'), auth:authEl };
 async function api(path, opt = {}){
   const h = { 'Content-Type':'application/json' };
@@ -2551,7 +2551,6 @@ async function initHome(){
 const levelOf = (st) => 1 + Math.floor(((st && st.games) || 0) / 5);
 function showHeader(){
   const st = acct.stats;
-  chickenEl.textContent = acct.user ? '치킨 ' + (st ? st.wins : 0) + '회 · 승률 ' + Math.round(st ? st.winRate : 0) + '%' : '';   // 기록 화면과 같은 반올림
   coinEl.textContent = acct.user ? '코인 ' + acct.coins : '';
   levelEl.textContent = acct.user ? 'Lv ' + levelOf(st) : acct.guest ? (acct.online ? '게스트 — 저장 안 됨' : '게스트 (계정 서버 없음)') : '';
 }
@@ -2742,7 +2741,7 @@ async function matchEnd(place){
   const body = { token:tok, place, kills, shots, hits, survival: Math.round((performance.now() - matchStartedAt) / 100) / 10 };
   try {
     const r = await api('lastdrop/match/end', { method:'POST', csrf:true, body });
-    if (r.ok){ coinMsg.textContent = r.j.coins ? '+' + r.j.coins + ' 코인' : (r.j.why === 'hourly_cap' ? '기록했다 — 시간당 12판이 넘어 코인 없음' : '기록했다 · 코인 없음 (4등 안에 들면 코인)');
+    if (r.ok){ coinMsg.textContent = r.j.coins ? '+' + r.j.coins + ' 코인' : '기록했다 · 코인 없음 (4등 안에 들면 코인)';
                coinMsg.classList.toggle('got', !!r.j.coins); await loadAccount(); }
     else coinMsg.textContent = '기록되지 않았다 — ' + ((r.j && r.j.error) || r.status);
   } catch (e) { coinMsg.textContent = '기록하지 못했다 — 연결을 확인해라'; }
