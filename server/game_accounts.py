@@ -66,6 +66,8 @@ MIN_MATCH = 180            # 판 길이 최소 3분 (서버가 잰 토큰 발급
 TOKEN_TTL = 3600           # 토큰은 1시간 안에 써야 한다
 MAX_PER_HOUR = 12          # 계정당 시간당 코인 받는 판 수
 MAX_TOKENS_PER_HOUR = 40   # 토큰 발급 남용 방지
+KEEP_RECENT = 100          # 판 상세는 계정당 최근 100판만, 나머지는 누적 합계(ld_totals)로 (29-b)
+RECORDED = "('ok','nocoin','capped')"
 
 _ph = PasswordHasher()                    # argon2id 기본값 (m=64MiB, t=3, p=4)
 _DUMMY = _ph.hash(secrets.token_hex(16))
@@ -108,6 +110,11 @@ def _db():
             PRIMARY KEY(user_id, item));
         CREATE TABLE IF NOT EXISTS rejects(id INTEGER PRIMARY KEY, user_id INTEGER, reason TEXT NOT NULL,
             payload TEXT, ts REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS ld_totals(
+            user_id INTEGER PRIMARY KEY, games INTEGER NOT NULL DEFAULT 0, wins INTEGER NOT NULL DEFAULT 0,
+            top4 INTEGER NOT NULL DEFAULT 0, place_sum INTEGER NOT NULL DEFAULT 0, kills INTEGER NOT NULL DEFAULT 0,
+            max_kills INTEGER NOT NULL DEFAULT 0, shots INTEGER NOT NULL DEFAULT 0, hits INTEGER NOT NULL DEFAULT 0,
+            survival_sum REAL NOT NULL DEFAULT 0);
     ''')
     return conn
 
@@ -453,9 +460,16 @@ def match_end():
         if coins and recent >= MAX_PER_HOUR:
             status, coins, why = 'capped', 0, 'hourly_cap'
             _reject(conn, u['id'], 'hourly_cap', {'place': place})
+        _totals(conn, u['id'])                         # 누적 행이 없으면 기존 기록으로 먼저 채운다 — 이번 판을 기록하기 '전에'
         conn.execute('UPDATE matches SET status=?, ended_ts=?, place=?, kills=?, survival=?, shots=?, hits=?, coins=? '
                      "WHERE id=? AND status='open'",
                      (status, now, place, kills, round(float(surv), 1), shots, hits, coins, m['id']))
+        conn.execute('UPDATE ld_totals SET games=games+1, wins=wins+?, top4=top4+?, place_sum=place_sum+?, kills=kills+?, '
+                     'max_kills=MAX(max_kills, ?), shots=shots+?, hits=hits+?, survival_sum=survival_sum+? WHERE user_id=?',
+                     (int(place == 1), int(place <= 4), place, kills, kills, shots, hits, round(float(surv), 1), u['id']))
+        conn.execute('DELETE FROM matches WHERE user_id=? AND status IN %s AND id NOT IN '
+                     '(SELECT id FROM matches WHERE user_id=? AND status IN %s ORDER BY ended_ts DESC LIMIT ?)' % (RECORDED, RECORDED),
+                     (u['id'], u['id'], KEEP_RECENT))
         if coins:
             conn.execute('INSERT INTO wallet(user_id, coins) VALUES(?, ?) '
                          'ON CONFLICT(user_id) DO UPDATE SET coins = coins + excluded.coins', (u['id'], coins))
@@ -467,27 +481,39 @@ def match_end():
         conn.close()
 
 
+def _totals(conn, uid):
+    """계정 누적 합계 — 없으면 남아 있는 판 기록으로 만든다 (누적 테이블이 생기기 전의 기록)."""
+    r = conn.execute('SELECT * FROM ld_totals WHERE user_id=?', (uid,)).fetchone()
+    if r:
+        return r
+    a = conn.execute('SELECT COUNT(*) g, COALESCE(SUM(place=1),0) w, COALESCE(SUM(place<=4),0) t, COALESCE(SUM(place),0) ps, '
+                     'COALESCE(SUM(kills),0) k, COALESCE(MAX(kills),0) mk, COALESCE(SUM(shots),0) sh, COALESCE(SUM(hits),0) h, '
+                     'COALESCE(SUM(survival),0) sv FROM matches WHERE user_id=? AND status IN %s' % RECORDED, (uid,)).fetchone()
+    conn.execute('INSERT INTO ld_totals VALUES(?,?,?,?,?,?,?,?,?,?)', (uid, *tuple(a)))
+    return conn.execute('SELECT * FROM ld_totals WHERE user_id=?', (uid,)).fetchone()
+
+
 @game_bp.route('/game/api/lastdrop/stats', methods=['GET'])
 def stats():
+    """전적 — 최근 100판 원자료 + 전체 누적 합계. 기간·항목 계산은 화면에서 (버튼마다 서버 왕복 없음)."""
     conn = _db()
     try:
         u, bad = _authed(conn, False)
         if bad:
             return bad
-        rows = conn.execute("SELECT place, kills, survival, shots, hits, ended_ts FROM matches "
-                            "WHERE user_id=? AND status IN ('ok','nocoin','capped') ORDER BY ended_ts DESC",
-                            (u['id'],)).fetchall()
-        g = len(rows)
-        wins = sum(1 for r in rows if r['place'] == 1)
-        shots = sum(r['shots'] for r in rows)
+        t = _totals(conn, u['id'])
+        conn.commit()
+        rows = conn.execute('SELECT place, kills, survival, shots, hits, ended_ts FROM matches '
+                            'WHERE user_id=? AND status IN %s ORDER BY ended_ts DESC LIMIT ?' % RECORDED,
+                            (u['id'], KEEP_RECENT)).fetchall()
+        g = t['games']
         return jsonify({
-            'games': g, 'wins': wins, 'winRate': round(wins / g * 100, 1) if g else 0,
-            'top4': sum(1 for r in rows if r['place'] <= 4),
-            'avgPlace': round(sum(r['place'] for r in rows) / g, 1) if g else None,
-            'kills': sum(r['kills'] for r in rows), 'maxKills': max((r['kills'] for r in rows), default=0),
-            'accuracy': round(sum(r['hits'] for r in rows) / shots * 100, 1) if shots else 0,
-            'recent': [{'ts': r['ended_ts'], 'place': r['place'], 'kills': r['kills'], 'survival': r['survival']}
-                       for r in rows[:10]],
+            'totals': {'games': g, 'wins': t['wins'], 'top4': t['top4'], 'placeSum': t['place_sum'], 'kills': t['kills'],
+                       'maxKills': t['max_kills'], 'shots': t['shots'], 'hits': t['hits'], 'survivalSum': round(t['survival_sum'], 1)},
+            'recent': [{'ts': r['ended_ts'], 'place': r['place'], 'kills': r['kills'], 'survival': r['survival'],
+                        'shots': r['shots'], 'hits': r['hits']} for r in rows],
+            # 홈 상단·레벨용 요약 (전체 기준)
+            'games': g, 'wins': t['wins'], 'winRate': round(t['wins'] / g * 100, 1) if g else 0,
             'coins': _coins(conn, u['id']),
         })
     finally:

@@ -121,17 +121,43 @@ body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
 #gun .s b{color:var(--amber);font-weight:400}
 
 /* 시작 · 결과 */
-#veil{position:absolute;inset:0;z-index:9;display:grid;place-items:center;
-  background:radial-gradient(ellipse at 50% 38%,rgba(32,24,16,.9),rgba(6,8,10,.96));
-  padding-left:max(16px,env(safe-area-inset-left,0px));
-  padding-right:max(16px,env(safe-area-inset-right,0px));
-  padding-block:20px;overflow-y:auto;cursor:default}
-#homeMain,#auth{display:flex;flex-direction:column;gap:10px;align-items:stretch}
-#pv{width:220px;height:250px;align-self:center;cursor:grab;touch-action:none}
-#pv:active{cursor:grabbing}
-#nick{font-size:20px;font-weight:900}
-#nickSub{font-size:12px;color:var(--dim);margin-top:-6px}
-#nickSub:empty{display:none}
+#veil{position:absolute;inset:0;z-index:9;overflow:hidden;background:#5a2a16;cursor:default}
+/* 홈 화면 (30 문서) — 노을 배경 위 반투명 어두운 패널로 글자 대비 */
+#home3d{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+#home3d:active{cursor:grabbing}
+#topbar{position:absolute;left:0;right:0;top:0;height:52px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;
+  padding:0 max(16px,env(safe-area-inset-right,0px)) 0 max(16px,env(safe-area-inset-left,0px));
+  background:rgba(14,10,12,.66);border-bottom:1px solid rgba(255,255,255,.08);backdrop-filter:blur(6px)}
+.tb-l{display:flex;gap:10px;align-items:baseline;min-width:0;white-space:nowrap;overflow:hidden}
+.tb-l b{font-size:16px;color:#fff;overflow:hidden;text-overflow:ellipsis}
+#level{font-family:var(--f-mono);font-size:12px;color:var(--amber)}
+.tb-c{font-family:var(--f-dis);font-weight:900;font-size:18px;color:#fff;white-space:nowrap}
+.tb-r{display:flex;gap:8px;justify-content:flex-end;align-items:center;white-space:nowrap}
+#coins{font-family:var(--f-mono);font-size:13px;color:var(--amber);margin-right:4px}
+.tb-r button,#tabs button{font:inherit;font-size:13px;color:var(--ink);background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
+  padding:6px 12px;cursor:pointer}
+.tb-r button:hover,#tabs button:hover{border-color:var(--amber)}
+#tabs{position:absolute;top:60px;left:max(16px,env(safe-area-inset-left,0px));display:flex;gap:6px}
+#tabs button{background:rgba(14,10,12,.66);backdrop-filter:blur(6px);padding:7px 16px}
+#tabs button.on{border-color:var(--amber);color:var(--amber)}
+#side{position:absolute;left:max(16px,env(safe-area-inset-left,0px));top:104px;max-height:calc(100% - 120px);width:min(380px,calc(100% - 32px));
+  overflow:auto;background:rgba(14,10,12,.68);border:1px solid rgba(255,255,255,.1);padding:14px;backdrop-filter:blur(6px);
+  display:flex;flex-direction:column;gap:12px}
+#side .tab{display:flex;flex-direction:column;gap:12px}
+#side .tab[hidden]{display:none}
+#side h1{margin:0;font-weight:900;font-size:34px;line-height:1;color:#fff}
+#side h1 em{font-style:normal;color:var(--amber)}
+#side h2{margin:0;font-size:15px;color:#fff}
+#side .sub{margin:0;font-size:13px;line-height:1.7;color:#c9c2b8}
+#side .sub b{color:#fff;font-weight:500}
+#side .note{margin:0;font-size:11px;line-height:1.6;color:#9a918a}
+#side .note b{color:var(--amber)}
+#side a.go{text-decoration:none;text-align:center;display:block}
+#play{position:absolute;right:max(24px,env(safe-area-inset-right,0px));bottom:24px;width:min(300px,calc(100% - 48px));height:68px;font-size:22px}
+#homeMsg:empty{display:none}
+.set{display:flex;gap:8px;align-items:center;font-size:13px;color:#c9c2b8}
+.set input[type=range]{flex:1}
+@media (max-width:760px){#side{max-height:calc(100% - 210px)}}
 .btns{display:flex;gap:8px;justify-content:center}
 .btns .go{flex:1;text-decoration:none;display:block}
 .btns.sm button{font:inherit;font-size:13px;color:var(--ink);background:rgba(11,15,19,.6);border:1px solid var(--line);
@@ -139,8 +165,6 @@ body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
 .btns.sm button:hover{border-color:var(--amber)}
 .btns.sm button.hl{border-color:var(--amber);color:var(--amber)}
 button.link{font:inherit;font-size:12px;color:var(--dim);background:none;border:0;text-decoration:underline;cursor:pointer;align-self:center}
-#dress{display:flex;flex-direction:column;gap:8px;text-align:left;border:1px solid var(--line);padding:10px;background:rgba(11,15,19,.6)}
-#dress[hidden]{display:none}
 .drow{display:grid;grid-template-columns:64px 1fr;gap:8px;align-items:center;font-size:12px;color:var(--dim)}
 .dopts{display:flex;flex-wrap:wrap;gap:6px}
 .dopts .sw{width:22px;height:22px;border-radius:50%;border:2px solid rgba(255,255,255,.15);cursor:pointer;padding:0}
@@ -149,9 +173,7 @@ button.link{font:inherit;font-size:12px;color:var(--dim);background:none;border:
 .dopts .opt.on{border-color:var(--amber);color:var(--amber)}
 #homeMsg{font-size:12px;color:var(--amber);min-height:1em}
 /* 전적·코인·상점·기록 (29 문서) */
-#chicken{font-family:var(--f-dis);font-weight:900;font-size:22px;color:#fff}
-#chicken:empty,#coins:empty,#coinMsg:empty{display:none}
-#coins{font-family:var(--f-mono);font-size:13px;color:var(--amber);margin-top:-6px}
+#coins:empty,#coinMsg:empty{display:none}   /* #chicken 은 비어도 상단 바 가운데 칸 자리를 지킨다 */
 #coinMsg{font-family:var(--f-mono);font-size:13px;color:var(--dim)}
 #coinMsg.got{font-size:22px;font-weight:700;color:var(--amber)}
 .btns.sm{flex-wrap:wrap}
@@ -168,6 +190,15 @@ button.link{font:inherit;font-size:12px;color:var(--dim);background:none;border:
 .srow button.buy{border-color:var(--amber);color:var(--amber)}
 .srow button:disabled{opacity:.5;cursor:progress}
 .rgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.rbtns{display:flex;flex-wrap:wrap;gap:5px}
+.rbtns button{font:inherit;font-size:12px;color:var(--ink);background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.14);padding:4px 9px;cursor:pointer}
+.rbtns button.on{border-color:var(--amber);color:var(--amber)}
+.rbig{padding:6px 2px 0}
+.rbig b{font-family:var(--f-dis);font-size:24px;font-weight:900;color:#fff}
+.rbig span{font-size:13px;color:#c9c2b8}
+.rcmp{display:grid;grid-template-columns:repeat(5,1fr);gap:5px}
+.rcmp .rc b{font-size:14px}
+.rc.on{border-color:var(--amber)}
 .rc{display:flex;flex-direction:column;align-items:center;padding:6px 2px;border:1px solid var(--line)}
 .rc b{font-family:var(--f-mono);font-size:16px;color:#fff;font-weight:400}
 .rc span{font-size:11px;color:var(--dim)}
@@ -176,12 +207,6 @@ button.link{font:inherit;font-size:12px;color:var(--dim);background:none;border:
 .rr{display:grid;grid-template-columns:1.4fr .8fr .8fr .8fr;gap:6px;color:var(--dim)}
 .rr b{color:var(--ink);font-weight:400}
 .rr b.win{color:var(--amber)}
-.card{width:100%;max-width:440px;display:flex;flex-direction:column;gap:15px;text-align:center}
-.card h1{margin:0;font-weight:900;font-size:clamp(34px,9vw,52px);line-height:.95;letter-spacing:-.02em;
-  text-wrap:balance;color:#fff;text-shadow:0 0 44px rgba(255,157,46,.4)}
-.card h1 em{font-style:normal;color:var(--amber)}
-.card .sub{margin:0;font-size:13px;line-height:1.7;color:var(--dim)}
-.card .sub b{color:var(--ink);font-weight:500}
 .keys{margin:0;display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:12.5px;
   text-align:left;max-width:330px;margin-inline:auto}
 .keys dt{font-family:var(--f-mono);font-size:11px;color:var(--amber);
@@ -191,7 +216,6 @@ button.link{font:inherit;font-size:12px;color:var(--dim);background:none;border:
   color:#1a1206;background:var(--amber);border:none;border-bottom:3px solid #b96c14;padding:14px}
 .go:disabled{background:#2a3038;border-bottom-color:#1a1e24;color:var(--dim);cursor:progress}
 .go:focus-visible{outline:2px solid #fff;outline-offset:3px}
-.note{margin:0;font-size:10.5px;line-height:1.6;color:#5d6760}
 #rank{font-family:var(--f-mono);font-size:15px;color:var(--amber)}
 #rank u{text-decoration:none;font-size:38px;color:#fff;display:block;line-height:1.1}
 #stats{font-family:var(--f-mono);font-size:12px;color:var(--dim);line-height:1.8}
@@ -263,55 +287,68 @@ button.link{font:inherit;font-size:12px;color:var(--dim);background:none;border:
   </div>
 
   <div id="veil">
-    <div class="card">
-      <h1>라스트 <em>드롭</em></h1>
-      <div id="auth" hidden>
-        <p class="sub">로그인하면 캐릭터 꾸미기와 기록이 계정에 저장됩니다.</p>
-        <div class="btns"><a class="go" id="loginLink" href="/game/?next=/game/lastdrop/">로그인 · 계정 만들기</a></div>
+    <!-- 홈 화면 (30 문서) — 노을 속 수송기 화물칸 3D 장면 위에 위쪽 UI · 왼쪽 패널 · 오른쪽 아래 [게임 시작] -->
+    <canvas id="home3d" aria-label="내 캐릭터 — 끌어서 돌리기"></canvas>
+    <header id="topbar">
+      <div class="tb-l"><b id="nick">…</b><span id="level"></span></div>
+      <div class="tb-c" id="chicken"></div>
+      <div class="tb-r"><span id="coins"></span><button type="button" id="setBtn">설정</button><button type="button" id="outBtn">로그아웃</button></div>
+    </header>
+    <nav id="tabs" role="tablist">
+      <button type="button" role="tab" data-tab="home" id="homeBtn">홈</button>
+      <button type="button" role="tab" data-tab="dress" id="dressBtn">꾸미기</button>
+      <button type="button" role="tab" data-tab="shop" id="shopBtn">상점</button>
+      <button type="button" role="tab" data-tab="rec" id="recBtn">기록</button>
+    </nav>
+    <section id="side">
+      <div id="auth" class="tab" hidden>
+        <h2>로그인</h2>
+        <p class="sub">로그인하면 캐릭터 꾸미기 · 전적 · 코인이 계정에 저장됩니다.</p>
+        <a class="go" id="loginLink" href="/game/?next=/game/lastdrop/">로그인 · 계정 만들기</a>
         <button type="button" class="link" id="guestBtn">로그인 없이 하기</button>
       </div>
-      <div id="homeMain" hidden>
-        <div id="chicken"></div><div id="coins"></div>
-        <canvas id="pv" aria-label="내 캐릭터 미리보기 — 끌어서 돌리기"></canvas>
-        <div id="nick"></div><div id="nickSub"></div>
-        <div class="btns"><button class="go" id="play" disabled>섬 만드는 중…</button></div>
-        <div id="coinMsg" role="status"></div>
-        <div class="btns sm"><button type="button" id="dressBtn">꾸미기</button><button type="button" id="shopBtn">상점</button><button type="button" id="recBtn">기록</button><button type="button" id="outBtn">로그아웃</button></div>
-        <div id="dress" hidden>
-          <div id="dressRows"></div>
-          <div class="btns sm"><button type="button" id="saveBtn" class="hl">저장</button><button type="button" id="cancelBtn">취소</button></div>
+      <div id="tabHome" class="tab">
+        <div id="result" hidden>
+          <div id="rank"></div>
+          <div id="coinMsg" role="status"></div>
+          <div id="stats"></div>
+          <div id="board"></div>
         </div>
-        <div id="shop" class="panel" hidden>
-          <div id="shopRows"></div>
-          <div class="btns sm"><button type="button" id="shopClose">닫기</button></div>
+        <div id="intro">
+          <h1>라스트 <em>드롭</em></h1>
+          <p class="sub" id="lead">수송기가 <b>1km 섬</b>을 가로지른다. <b>16명</b>이 뛰어내려 총과 방어구를 줍고,
+            좁혀 오는 자기장 안으로 들어가 <b>마지막 한 명</b>이 될 때까지 버틴다. 레드존 폭격과 보급 상자도 떨어진다.</p>
+          <p class="sub">조작법은 오른쪽 위 <b>[설정]</b>.</p>
+          <p class="note"><b>마우스와 키보드가 필요합니다</b> — 화면 잠금(포인터 락)으로 조준하는 방식이라 휴대폰에서는
+            조작되지 않습니다. 혼자 돌아가는 오프라인 한 판이고, 텍스처 이미지 없이 형태와 색으로만 만들었습니다.</p>
         </div>
-        <div id="rec" class="panel" hidden>
-          <div id="recBody"></div>
-          <div class="btns sm"><button type="button" id="recClose">닫기</button></div>
-        </div>
-        <div id="homeMsg" role="status"></div>
       </div>
-      <p class="sub" id="lead">수송기가 <b>1km 섬</b>을 가로지른다. <b>16명</b>이 뛰어내려 총과 방어구를 줍고,
-        좁혀 오는 자기장 안으로 들어가 <b>마지막 한 명</b>이 될 때까지 버틴다.
-        레드존 폭격과 보급 상자도 떨어진다.</p>
-      <dl class="keys">
-        <dt>Space</dt><dd>수송기에서 <b>이탈</b> — 낙하산은 자동</dd>
-        <dt>W A S D</dt><dd>이동·낙하 조종 · Shift 달리기</dd>
-        <dt>낙하 중 W / S</dt><dd>다이브(빨리 내려간다) / 활강(천천히, 멀리 간다)</dd>
-        <dt>C / Z</dt><dd>앉기 / 엎드리기 — 느려지지만 잘 맞는다</dd>
-        <dt>좌 · 우클릭</dt><dd>발사 · 정조준 (저격은 배율)</dd>
-        <dt>E</dt><dd>줍기 · 지프 탑승 · 보급 상자</dd>
-        <dt>R / 1~5 · 휠</dt><dd>재장전 / 핫바 (총·회복템) · 맨손이면 좌클릭 주먹</dd>
-        <dt>Tab</dt><dd>인벤토리 — 주변·가방·장비, 우클릭 버리기</dd>
-        <dt>F</dt><dd>알아서 적당한 회복품 사용 (인벤토리에서 클릭도)</dd>
-      </dl>
-      <div id="rank" hidden></div>
-      <div id="stats" hidden></div>
-      <div id="board" hidden></div>
-      <p class="note"><b style="color:#ff9d2e">마우스와 키보드가 필요합니다</b> — 화면 잠금(포인터 락)으로 조준하는 방식이라
-        휴대폰에서는 조작되지 않습니다. 혼자 돌아가는 오프라인 한 판이고, 텍스처 이미지 없이 형태와 색으로만
-        만들었습니다. 소리도 전부 합성음입니다.</p>
-    </div>
+      <div id="dress" class="tab" hidden>
+        <div id="dressRows"></div>
+        <div class="btns sm"><button type="button" id="saveBtn" class="hl">저장</button><button type="button" id="cancelBtn">되돌리기</button></div>
+      </div>
+      <div id="shop" class="tab" hidden><div id="shopRows"></div></div>
+      <div id="rec" class="tab" hidden><div id="recBody"></div></div>
+      <div id="settings" class="tab" hidden>
+        <h2>설정</h2>
+        <label class="set"><input type="checkbox" id="setSound"> 소리 켜기</label>
+        <label class="set">마우스 감도 <input type="range" id="setSens" min="0.4" max="2.5" step="0.1"> <span id="setSensV"></span></label>
+        <h2>조작법</h2>
+        <dl class="keys">
+          <dt>Space</dt><dd>수송기에서 <b>이탈</b> — 낙하산은 자동</dd>
+          <dt>W A S D</dt><dd>이동·낙하 조종 · Shift 달리기</dd>
+          <dt>낙하 중 W / S</dt><dd>다이브(빨리 내려간다) / 활강(천천히, 멀리 간다)</dd>
+          <dt>C / Z</dt><dd>앉기 / 엎드리기 — 느려지지만 잘 맞는다</dd>
+          <dt>좌 · 우클릭</dt><dd>발사 · 정조준 (저격은 배율)</dd>
+          <dt>E</dt><dd>줍기 · 지프 탑승 · 보급 상자</dd>
+          <dt>R / 1~5 · 휠</dt><dd>재장전 / 핫바 (총·회복템) · 맨손이면 좌클릭 주먹</dd>
+          <dt>Tab</dt><dd>인벤토리 — 주변·가방·장비, 우클릭 버리기</dd>
+          <dt>F</dt><dd>알아서 적당한 회복품 사용 (인벤토리에서 클릭도)</dd>
+        </dl>
+      </div>
+      <div id="homeMsg" role="status"></div>
+    </section>
+    <button class="go" id="play" disabled>섬 만드는 중…</button>
   </div>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>

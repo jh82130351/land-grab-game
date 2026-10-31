@@ -1014,7 +1014,7 @@ function audio(){
   const C = window.AudioContext || window.webkitAudioContext;
   if (!C) return;
   try { AU.ctx = new C(); } catch(e){ return; }
-  AU.g = AU.ctx.createGain(); AU.g.gain.value = 0.55; AU.g.connect(AU.ctx.destination);
+  AU.g = AU.ctx.createGain(); AU.g.gain.value = SET.sound ? 0.55 : 0; AU.g.connect(AU.ctx.destination);
   const n = AU.ctx.sampleRate * 0.5;
   AU.noise = AU.ctx.createBuffer(1, n, AU.ctx.sampleRate);
   const d = AU.noise.getChannelData(0);
@@ -2280,8 +2280,7 @@ function finish(won){
   over = true; playing = false;
   if (document.pointerLockElement) document.exitPointerLock();
   placed = won ? 1 : aliveN() + (me().alive ? 0 : 1);
-  document.getElementById('lead').hidden = true;
-  document.querySelector('.keys').hidden = true;
+  $id('result').hidden = false; $id('intro').hidden = true;      // 홈 탭이 결과를 보여 준다
   const rk = document.getElementById('rank'), st = document.getElementById('stats');
   rk.hidden = false; st.hidden = false;
   rk.innerHTML = won ? '<u>승리</u>최후의 1인' : '<u>#' + placed + '</u>' + N_ENT + '명 중';
@@ -2299,7 +2298,7 @@ function finish(won){
   pauseEl.hidden = true;
   playBtn.disabled = false;
   endAt = performance.now() + 2800; endWon = !!won;   // 2.8초 동안 내 캐릭터를 비추고 결과 화면 (updateMyView)
-  panel(null); matchEnd(placed);                 // 결과를 서버에 — 코인은 서버가 계산
+  panel('home'); matchEnd(placed);               // 결과를 서버에 — 코인은 서버가 계산
   if (won) sKill(); else sHurt();
 }
 
@@ -2365,7 +2364,7 @@ addEventListener('mouseup', (e) => {
 addEventListener('contextmenu', (e) => { if (playing) e.preventDefault(); });
 addEventListener('mousemove', (e) => {
   if (!locked) return;
-  const s = 0.0021 * (scoped ? 0.45 : 1);
+  const s = 0.0021 * SET.sens * (scoped ? 0.45 : 1);   // [설정] 마우스 감도
   yawO.rotation.y -= e.movementX * s;
   pitO.rotation.x -= e.movementY * s;
   const L = Math.PI/2 - 0.02;
@@ -2496,11 +2495,11 @@ function frame(now){
   }
   updateFx(dt);
   updateMyView(dt);
-  renderPreview(dt);
+  renderHome(dt);
   sun.position.set(me().x - 180, 150, me().z + 120);
   sun.target.position.set(me().x, 0, me().z);
   sun.target.updateMatrixWorld();
-  renderer.render(scene, cam);
+  if (veil.hidden) renderer.render(scene, cam);   // 홈·결과 화면이 덮은 동안엔 섬은 안 그린다
 }
 
 // ══ 시작 ══════════════════════════════════════════════════════
@@ -2512,11 +2511,12 @@ let elapsed = 0;
 const acct = { user:null, csrf:null, guest:false, online:true, avatar:{ ...AV_DEFAULT }, saved:{ ...AV_DEFAULT },
                coins:0, owned:new Set(), stats:null, match:null };
 const $id = (id) => document.getElementById(id);
-const authEl = $id('auth'), homeMain = $id('homeMain'), nickEl = $id('nick'), nickSub = $id('nickSub');
-const dressBtn = $id('dressBtn'), outBtn = $id('outBtn'), shopBtn = $id('shopBtn'), recBtn = $id('recBtn');
+const authEl = $id('auth'), nickEl = $id('nick'), levelEl = $id('level'), tabsEl = $id('tabs');
+const dressBtn = $id('dressBtn'), outBtn = $id('outBtn'), shopBtn = $id('shopBtn'), recBtn = $id('recBtn'), setBtn = $id('setBtn');
 const dressEl = $id('dress'), dressRows = $id('dressRows'), homeMsg = $id('homeMsg');
 const shopEl = $id('shop'), shopRows = $id('shopRows'), recEl = $id('rec'), recBody = $id('recBody');
 const chickenEl = $id('chicken'), coinEl = $id('coins'), coinMsg = $id('coinMsg');
+const TABS = { home:$id('tabHome'), dress:dressEl, shop:shopEl, rec:recEl, settings:$id('settings'), auth:authEl };
 async function api(path, opt = {}){
   const h = { 'Content-Type':'application/json' };
   if (opt.csrf) h['X-CSRF-Token'] = acct.csrf || '';
@@ -2547,24 +2547,30 @@ async function initHome(){
   acct.saved = { ...acct.avatar };
   showHome();
 }
+// 레벨 — 아직 레벨 체계가 없어 판수로 정한다 (5판마다 1, 30 문서 · 정현 확인)
+const levelOf = (st) => 1 + Math.floor(((st && st.games) || 0) / 5);
 function showHeader(){
   const st = acct.stats;
-  chickenEl.textContent = acct.user ? '치킨 ' + (st ? st.wins : 0) + '회 · 승률 ' + (st ? st.winRate : 0) + '%' : '';
-  coinEl.textContent = acct.user ? '보유 코인 ' + acct.coins : '';
+  chickenEl.textContent = acct.user ? '치킨 ' + (st ? st.wins : 0) + '회 · 승률 ' + Math.round(st ? st.winRate : 0) + '%' : '';   // 기록 화면과 같은 반올림
+  coinEl.textContent = acct.user ? '코인 ' + acct.coins : '';
+  levelEl.textContent = acct.user ? 'Lv ' + levelOf(st) : acct.guest ? (acct.online ? '게스트 — 저장 안 됨' : '게스트 (계정 서버 없음)') : '';
 }
 function showHome(){
   const signed = !!acct.user, inn = signed || acct.guest;
-  authEl.hidden = inn; homeMain.hidden = !inn;
-  nickEl.textContent = signed ? acct.user.nickname : '게스트';
-  nickSub.textContent = signed ? '' : acct.online ? '꾸미기·기록·코인이 저장되지 않는다' : '계정 서버에 닿지 않는다 — 게스트로 한다';
+  nickEl.textContent = signed ? acct.user.nickname : inn ? '게스트' : '로그인 필요';
   outBtn.textContent = signed ? '로그아웃' : '로그인';
   shopBtn.hidden = recBtn.hidden = !signed;       // 게스트는 상점·기록 없음
+  tabsEl.hidden = !inn; playBtn.hidden = !inn;
   showHeader();
   setAvatar(acct.avatar);
+  panel(inn ? 'home' : 'auth');
 }
-function panel(which){                           // 꾸미기 · 상점 · 기록 — 하나만 연다
-  dressEl.hidden = which !== 'dress'; shopEl.hidden = which !== 'shop'; recEl.hidden = which !== 'rec';
+function panel(which){                           // 왼쪽 패널 — 탭 하나만 연다 (홈·꾸미기·상점·기록·설정·로그인)
+  for (const [k, el] of Object.entries(TABS)) el.hidden = k !== which;
+  tabsEl.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.tab === which));
+  setBtn.classList.toggle('on', which === 'settings');
   homeMsg.textContent = '';
+  if (which !== 'dress' && which !== 'shop'){ acct.avatar = { ...acct.saved }; setAvatar(acct.avatar); }   // 저장 안 한 꾸미기·써 보기는 되돌린다
 }
 $id('guestBtn').addEventListener('click', () => { guestFlag(true); acct.guest = true; showHome(); });
 outBtn.addEventListener('click', async () => {
@@ -2610,8 +2616,10 @@ function buildDress(){
   }
   dressRows.replaceChildren(...rows);
 }
+$id('homeBtn').addEventListener('click', () => panel('home'));
 dressBtn.addEventListener('click', () => { panel('dress'); buildDress(); });
-$id('cancelBtn').addEventListener('click', () => { acct.avatar = { ...acct.saved }; setAvatar(acct.avatar); panel(null); });
+$id('cancelBtn').addEventListener('click', () => { acct.avatar = { ...acct.saved }; setAvatar(acct.avatar); buildDress(); });
+setBtn.addEventListener('click', () => panel('settings'));
 async function saveAvatar(){
   if (!acct.user){ acct.saved = { ...acct.avatar }; return '게스트는 저장되지 않는다 — 이번 접속에서만'; }
   try {
@@ -2622,7 +2630,7 @@ async function saveAvatar(){
 }
 $id('saveBtn').addEventListener('click', async () => {
   homeMsg.textContent = '저장 중…';
-  const m = await saveAvatar(); if (m === '저장했다' || !acct.user) panel(null); homeMsg.textContent = m;
+  const m = await saveAvatar(); homeMsg.textContent = m; buildDress();
 });
 // ── 상점: 코인으로 장식을 산다. 줄을 누르면 미리 써 본다, [구매] 는 한 번 더 눌러 확인
 function buildShop(){
@@ -2649,31 +2657,76 @@ function buildShop(){
   shopRows.replaceChildren(...rows);
 }
 shopBtn.addEventListener('click', async () => { panel('shop'); await loadAccount(); buildShop(); });
-$id('shopClose').addEventListener('click', () => { acct.avatar = { ...acct.saved }; setAvatar(acct.avatar); panel(null); });
-// ── 기록
+// ── 기록 (29-b) — 항목 버튼 × 판 수 버튼. 서버는 최근 100판 원자료 + 전체 누적을 한 번에 주고, 계산은 여기서
+const REC_METRICS = [
+  ['win',   '승률',          (r) => pct(r.filter(m => m.place === 1).length, r.length), (t) => pct(t.wins, t.games)],
+  ['top4',  'Top4 비율',     (r) => pct(r.filter(m => m.place <= 4).length, r.length), (t) => pct(t.top4, t.games)],
+  ['place', '평균 순위',     (r) => r.length ? (sum(r, 'place') / r.length).toFixed(1) + '위' : null, (t) => t.games ? (t.placeSum / t.games).toFixed(1) + '위' : null],
+  ['kills', '평균 킬',       (r) => r.length ? (sum(r, 'kills') / r.length).toFixed(2) : null, (t) => t.games ? (t.kills / t.games).toFixed(2) : null],
+  ['acc',   '명중률',        (r) => pct(sum(r, 'hits'), sum(r, 'shots')), (t) => pct(t.hits, t.shots)],
+  ['surv',  '평균 생존시간', (r) => r.length ? mmss(sum(r, 'survival') / r.length) : null, (t) => t.games ? mmss(t.survivalSum / t.games) : null],
+];
+const REC_PERIODS = [[5, '최근 5판'], [10, '최근 10판'], [50, '최근 50판'], [100, '최근 100판'], [0, '전체']];
+const sum = (r, k) => r.reduce((a, m) => a + (m[k] || 0), 0);
+const pct = (a, b) => b ? Math.round(a / b * 100) + '%' : null;
+const mmss = (sec) => Math.floor(sec / 60) + ':' + String(Math.floor(sec % 60)).padStart(2, '0');
+const recSel = { m:'win', n:50 };
+try { Object.assign(recSel, JSON.parse(localStorage.getItem('ld_rec') || '{}')); } catch (e) {}
+function recValue(st, metric, n){                 // → { v: 값 또는 '—', have: 계산에 쓴 판 수 }
+  const M = REC_METRICS.find(x => x[0] === metric) || REC_METRICS[0];
+  if (n === 0){ const v = M[3](st.totals); return { v: v === null ? '—' : v, have: st.totals.games }; }
+  const r = st.recent.slice(0, n), v = M[2](r);
+  return { v: v === null ? '—' : v, have: r.length };
+}
 function buildRec(){
-  const st = acct.stats || { games:0, wins:0, winRate:0, top4:0, avgPlace:null, kills:0, maxKills:0, accuracy:0, recent:[] };
-  const grid = el2('div', 'rgrid');
-  for (const [k, v] of [['판수', st.games], ['치킨', st.wins], ['승률', st.winRate + '%'], ['Top 4', st.top4],
-                        ['평균 순위', st.avgPlace === null ? '—' : st.avgPlace], ['총 킬', st.kills], ['최다 킬', st.maxKills], ['명중률', st.accuracy + '%']]){
-    const c = el2('div', 'rc'); c.appendChild(el2('b', '', String(v))); c.appendChild(el2('span', '', k)); grid.appendChild(c);
+  const st = acct.stats && acct.stats.totals ? acct.stats : { totals:{ games:0, wins:0, top4:0, placeSum:0, kills:0, maxKills:0, shots:0, hits:0, survivalSum:0 }, recent:[] };
+  const btnRow = (items, cur, onPick) => { const d = el2('div', 'rbtns');
+    for (const [k, label] of items){ const b = el2('button', k === cur ? 'on' : '', label); b.type = 'button';
+      b.addEventListener('click', () => { onPick(k); try { localStorage.setItem('ld_rec', JSON.stringify(recSel)); } catch (e) {} buildRec(); }); d.appendChild(b); }
+    return d; };
+  const M = REC_METRICS.find(x => x[0] === recSel.m) || REC_METRICS[0];
+  const P = REC_PERIODS.find(x => x[0] === recSel.n) || REC_PERIODS[2];
+  const main = recValue(st, M[0], P[0]);
+  const big = el2('div', 'rbig');
+  big.appendChild(el2('b', '', M[1] + ' ' + main.v));
+  big.appendChild(el2('span', '', ' · ' + P[1] + (P[0] && main.have < P[0] && main.have > 0 ? ' (현재 ' + main.have + '판)' : P[0] === 0 ? ' (' + main.have + '판)' : '')));
+  const cmp = el2('div', 'rcmp');                  // 다섯 기간을 나란히 — 추세
+  for (const [n, label] of REC_PERIODS){
+    const v = recValue(st, M[0], n), c = el2('div', 'rc' + (n === P[0] ? ' on' : ''));
+    c.appendChild(el2('b', '', v.v)); c.appendChild(el2('span', '', n ? n + '판' + (v.have < n && v.have > 0 ? ' (' + v.have + ')' : '') : '전체'));
+    cmp.appendChild(c);
+  }
+  const t = st.totals, acc = el2('div', 'rgrid');  // 누적
+  for (const [k, v] of [['총 판수', t.games], ['치킨', t.wins], ['총 킬', t.kills], ['최다 킬', t.maxKills]]){
+    const c = el2('div', 'rc'); c.appendChild(el2('b', '', String(v))); c.appendChild(el2('span', '', k)); acc.appendChild(c);
   }
   const list = el2('div', 'rlist');
   list.appendChild(el2('div', 'rh', '최근 10판'));
   if (!st.recent.length) list.appendChild(el2('div', 'dim', '아직 기록이 없다'));
-  for (const m of st.recent){
-    const d = new Date(m.ts * 1000), row = el2('div', 'rr');
-    const pad = (n) => String(n).padStart(2, '0');
+  for (const m of st.recent.slice(0, 10)){
+    const d = new Date(m.ts * 1000), row = el2('div', 'rr'), pad = (n) => String(n).padStart(2, '0');
     row.appendChild(el2('span', '', (d.getMonth() + 1) + '/' + d.getDate() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes())));
     row.appendChild(el2('b', m.place === 1 ? 'win' : '', m.place === 1 ? '치킨' : '#' + m.place));
     row.appendChild(el2('span', '', m.kills + '킬'));
-    row.appendChild(el2('span', '', Math.floor(m.survival / 60) + ':' + pad(Math.floor(m.survival % 60))));
+    row.appendChild(el2('span', '', mmss(m.survival)));
     list.appendChild(row);
   }
-  recBody.replaceChildren(grid, list);
+  recBody.replaceChildren(btnRow(REC_METRICS.map(x => [x[0], x[1]]), M[0], k => recSel.m = k),
+                          btnRow(REC_PERIODS, P[0], n => recSel.n = n), big, cmp, el2('div', 'rh', '누적'), acc, list);
 }
 recBtn.addEventListener('click', async () => { panel('rec'); await loadAccount(); buildRec(); });
-$id('recClose').addEventListener('click', () => panel(null));
+// ── 설정 — 소리 · 마우스 감도 (이 브라우저에만 저장)
+const SET = { sound:true, sens:1 };
+try { Object.assign(SET, JSON.parse(localStorage.getItem('ld_settings') || '{}')); } catch (e) {}
+const setSound = $id('setSound'), setSens = $id('setSens'), setSensV = $id('setSensV');
+function applySettings(){
+  setSound.checked = !!SET.sound; setSens.value = SET.sens; setSensV.textContent = '×' + Number(SET.sens).toFixed(1);
+  if (AU.g) AU.g.gain.value = SET.sound ? 0.55 : 0;
+  try { localStorage.setItem('ld_settings', JSON.stringify(SET)); } catch (e) {}
+}
+setSound.addEventListener('change', () => { SET.sound = setSound.checked; applySettings(); });
+setSens.addEventListener('input', () => { SET.sens = Math.max(0.4, Math.min(2.5, +setSens.value || 1)); applySettings(); });
+applySettings();
 // ── 판: 시작 때 서버에서 일회용 매치 토큰, 끝나면 토큰 + 결과를 내고 코인은 서버가 계산한다
 let matchStartedAt = 0;
 function matchBegin(){
@@ -2694,33 +2747,141 @@ async function matchEnd(place){
     else coinMsg.textContent = '기록되지 않았다 — ' + ((r.j && r.j.error) || r.status);
   } catch (e) { coinMsg.textContent = '기록하지 못했다 — 연결을 확인해라'; }
 }
-// 미리보기 — 홈·결과 화면에서만 그린다. 천천히 돌고, 끌면 돌린다
-const pvCanvas = document.getElementById('pv');
-const pvR = new THREE.WebGLRenderer({ canvas:pvCanvas, antialias:true, alpha:true });
+// ══ 홈 장면 (30 문서) — 노을 속을 나는 수송기 화물칸. 캐릭터는 열린 램프 앞에 선다 ════
+// 하늘은 아래 진한 주황 → 위 연한 노랑·살구. 낮은 구름이 램프 너머로 흘러가고, 저 아래 섬 실루엣과 바다가 반짝인다.
+// 조명: 열린 문 쪽 주황 역광(윤곽이 노을빛) + 실내 약한 보조광 + 천장 붉은 경고등 점멸. 텍스처 없이 색·형태만.
+const pvCanvas = $id('home3d');
+const pvR = new THREE.WebGLRenderer({ canvas:pvCanvas, antialias:true });
 pvR.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
 const pvScene = new THREE.Scene();
-pvScene.add(new THREE.HemisphereLight(0xdfe8ff, 0x3a3328, 1.15));
-const pvSun = new THREE.DirectionalLight(0xffffff, 1.5); pvSun.position.set(2, 4, 3); pvScene.add(pvSun);
-const pvCam = new THREE.PerspectiveCamera(30, 1, 0.1, 20); pvCam.position.set(0, 1.2, 4.4); pvCam.lookAt(0, 0.95, 0);
-let pvMesh = null, pvYaw = 0.6, pvDrag = null, myAvatar = null, myChute = null;
+pvScene.fog = new THREE.Fog(0xf2a466, 160, 520);
+const pvCam = new THREE.PerspectiveCamera(36, 1, 0.1, 900);
+const HOME = { clouds:[], sparks:[], warn:[], warnLight:null, t:0, charH:2.35 };
+let pvMesh = null, pvYaw = 0.35, pvDrag = null, myAvatar = null, myChute = null;
+const OUT = new THREE.Group();                    // 램프 너머 바깥 — 기수를 든 채 나는 중이라 뒤로 보면 수평선이 위로 올라와 있다
+OUT.rotation.x = 0.06; pvScene.add(OUT);
+function buildHome(){
+  const lerpStops = (stops, y, c) => {            // y 에 맞는 색 (stops: [[y, 색], ...] 오름차순)
+    let i = 0; while (i < stops.length - 2 && y > stops[i + 1][0]) i++;
+    const [y0, c0] = stops[i], [y1, c1] = stops[i + 1], k = Math.max(0, Math.min(1, (y - y0) / (y1 - y0)));
+    return c.setHex(c0).lerp(new THREE.Color(c1), k);
+  };
+  // 하늘
+  const skyG = new THREE.SphereGeometry(600, 32, 20), sp = skyG.attributes.position, sc = [], c = new THREE.Color();
+  const SKY = [[-1, 0x7a2a16], [-0.08, 0xc8461e], [0.02, 0xe8642a], [0.12, 0xf5944a], [0.3, 0xffc283], [0.6, 0xffe2b0], [1, 0xfff0d2]];
+  for (let i = 0; i < sp.count; i++){ lerpStops(SKY, sp.getY(i) / 600, c); sc.push(c.r, c.g, c.b); }
+  skyG.setAttribute('color', new THREE.Float32BufferAttribute(sc, 3));
+  OUT.add(new THREE.Mesh(skyG, new THREE.MeshBasicMaterial({ vertexColors:true, side:THREE.BackSide, depthWrite:false, fog:false })));
+  // 해 — 수평선 근처
+  const sun = new THREE.Mesh(new THREE.CircleGeometry(18, 32), new THREE.MeshBasicMaterial({ color:0xfff1c4, fog:false }));
+  sun.position.set(-70, 26, -520); OUT.add(sun);
+  // 바다 · 반짝임
+  const sea = new THREE.Mesh(new THREE.PlaneGeometry(2400, 2400), new THREE.MeshBasicMaterial({ color:0xb4532c }));
+  sea.rotation.x = -Math.PI / 2; sea.position.y = -25; OUT.add(sea);   // 문으로 보이는 건 수평선 아래 몇 도뿐 — 바다를 그 안에
+  const sparkMat = new THREE.MeshBasicMaterial({ color:0xffe4a8, transparent:true, opacity:0.9, depthWrite:false });
+  for (let i = 0; i < 90; i++){
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), sparkMat.clone());
+    m.rotation.x = -Math.PI / 2; m.scale.set(2 + Math.random() * 6, 0.35 + Math.random() * 0.5, 1);
+    m.position.set(-110 + Math.random() * 160, -24.8, -70 - Math.random() * 420);
+    m.userData.ph = Math.random() * 6.28; m.userData.sp = 1.5 + Math.random() * 3;
+    OUT.add(m); HOME.sparks.push(m);
+  }
+  // 섬 실루엣 — 저 멀리 아래
+  const isl = new THREE.MeshBasicMaterial({ color:0x5a2a2e });
+  for (const [x, z, r, h] of [[-30, -240, 45, 14], [45, -310, 35, 9], [-95, -360, 55, 16], [90, -420, 40, 11]]){
+    const m = new THREE.Mesh(new THREE.ConeGeometry(1, 1, 7), isl); m.scale.set(r, h, r * 0.6); m.position.set(x, -25 + h / 2, z); OUT.add(m);
+  }
+  // 구름 — 낮게 몇 겹. 램프 너머로 흘러간다
+  const cloudMats = [0xffd2ae, 0xf7b58c, 0xffe1c4, 0xeea07c].map(col => new THREE.MeshBasicMaterial({ color:col, transparent:true, opacity:0.92 }));
+  for (let i = 0; i < 26; i++){
+    const g = new THREE.Group(), mat = cloudMats[i % 4], n = 3 + (i % 3);
+    for (let k = 0; k < n; k++){ const b = new THREE.Mesh(BOX, mat); b.scale.set(14 + Math.random() * 18, 2.5 + Math.random() * 3, 8 + Math.random() * 10);
+      b.position.set((k - n / 2) * 9 + Math.random() * 5, Math.random() * 2.5, Math.random() * 6 - 3); g.add(b); }
+    const low = i % 4 !== 3;                       // 대부분 낮게 깔리고, 몇 개는 수평선 위 먼 하늘에
+    g.position.set(-150 + Math.random() * 300, low ? -6 - Math.random() * 14 : 10 + Math.random() * 22, -40 - Math.random() * 480);
+    g.userData.sp = 9 + (i % 4) * 3;
+    OUT.add(g); HOME.clouds.push(g);
+  }
+  // 화물칸 — 바닥 · 벽 · 천장 · 늑골 · 열린 램프 (카메라는 +z 쪽, 램프는 -z 쪽)
+  const metal = new THREE.MeshStandardMaterial({ color:0x4a4f52, roughness:0.85, metalness:0.2, flatShading:true });
+  const dark = new THREE.MeshStandardMaterial({ color:0x2c2f31, roughness:0.9, flatShading:true });
+  const rib = new THREE.MeshStandardMaterial({ color:0x666c70, roughness:0.7, metalness:0.3, flatShading:true });
+  const box = (mat, x, y, z, w, h, d) => { const m = new THREE.Mesh(BOX, mat); m.scale.set(w, h, d); m.position.set(x, y, z); pvScene.add(m); return m; };
+  const L0 = -9, L1 = 16;                          // 화물칸 z 범위
+  box(dark, 0, -0.1, (L0 + L1) / 2, 5.2, 0.2, L1 - L0);                 // 바닥
+  box(metal, -2.7, 1.8, (L0 + L1) / 2, 0.2, 3.8, L1 - L0);              // 왼벽
+  box(metal, 2.7, 1.8, (L0 + L1) / 2, 0.2, 3.8, L1 - L0);               // 오른벽
+  box(metal, 0, 3.75, (L0 + L1) / 2, 5.6, 0.2, L1 - L0);                // 천장
+  box(metal, 0, 1.8, L1, 5.6, 3.8, 0.2);                                // 앞 칸막이 (카메라 뒤)
+  for (let z = L0 + 0.6; z < L1; z += 1.5){                              // 늑골
+    box(rib, -2.52, 1.8, z, 0.16, 3.6, 0.2); box(rib, 2.52, 1.8, z, 0.16, 3.6, 0.2); box(rib, 0, 3.58, z, 5.0, 0.14, 0.2);
+  }
+  box(rib, -2.45, 3.2, L0, 0.3, 1.2, 0.3); box(rib, 2.45, 3.2, L0, 0.3, 1.2, 0.3); box(rib, 0, 3.6, L0, 5.4, 0.3, 0.3);   // 문틀
+  const ramp = box(dark, 0, -0.62, L0 - 1.9, 5.0, 0.16, 4.0); ramp.rotation.x = -0.28;                                      // 내려간 램프
+  box(rib, -2.4, -0.5, L0 - 1.9, 0.12, 0.3, 4.0).rotation.x = -0.28; box(rib, 2.4, -0.5, L0 - 1.9, 0.12, 0.3, 4.0).rotation.x = -0.28;
+  // 바닥 고정 띠 · 낙하산 가방
+  const strap = new THREE.MeshStandardMaterial({ color:0xb89a3a, roughness:0.9 });
+  for (const x of [-1.6, 1.6]) box(strap, x, 0.005, 2, 0.08, 0.02, 20);
+  for (let z = -6; z < 14; z += 3) box(strap, 0, 0.006, z, 3.3, 0.02, 0.08);
+  const bagM = new THREE.MeshStandardMaterial({ color:0x4f5a3a, roughness:0.95, flatShading:true });
+  for (const [x, z] of [[-2.15, -3], [-2.15, -1.8], [2.15, -4.2], [2.15, 1.5]]){
+    box(bagM, x, 0.32, z, 0.45, 0.64, 0.38); box(strap, x, 0.32, z + 0.2, 0.47, 0.06, 0.02); box(strap, x, 0.5, z + 0.2, 0.47, 0.06, 0.02);
+  }
+  // 천장 붉은 경고등
+  const warnM = new THREE.MeshBasicMaterial({ color:0xff3b2a });
+  for (const z of [-6, 0, 6]){ const w = box(warnM, 0, 3.6, z, 0.3, 0.1, 0.3); HOME.warn.push(w); }
+  HOME.warnLight = new THREE.PointLight(0xff3b2a, 0.6, 9, 2); HOME.warnLight.position.set(0, 3.3, 0); pvScene.add(HOME.warnLight);
+  // 조명 — 열린 문 쪽 주황 역광 + 실내 약한 보조광
+  pvScene.add(new THREE.HemisphereLight(0xffc89a, 0x2a1810, 0.55));
+  const back = new THREE.DirectionalLight(0xff9a48, 3.0); back.position.set(0.8, 2.6, -14); back.target.position.set(0, 1, 0); pvScene.add(back, back.target);
+  const rim = new THREE.DirectionalLight(0xffb070, 1.4); rim.position.set(-3, 1.5, -8); rim.target.position.set(0, 1, 0); pvScene.add(rim, rim.target);
+  const fill = new THREE.DirectionalLight(0xb4c2e0, 0.95); fill.position.set(1.5, 2.5, 10); fill.target.position.set(0, 1, 0); pvScene.add(fill, fill.target);
+}
+buildHome();
 function setAvatar(a){
   a = avNormalize(a);
   if (pvMesh){ pvMesh.geometry.dispose(); pvMesh.geometry = avatarGeo(a); }
   else { pvMesh = new THREE.Mesh(avatarGeo(a), BOT_MAT); pvScene.add(pvMesh); }
+  pvMesh.geometry.computeBoundingBox(); HOME.top = pvMesh.geometry.boundingBox.max.y;   // 지금 모습의 실제 키 (모자 포함)
   if (myAvatar){ myAvatar.geometry.dispose(); myAvatar.geometry = avatarGeo(a); }
 }
 pvCanvas.addEventListener('pointerdown', (e) => { pvDrag = { x:e.clientX, yaw:pvYaw }; pvCanvas.setPointerCapture(e.pointerId); });
 pvCanvas.addEventListener('pointermove', (e) => { if (pvDrag) pvYaw = pvDrag.yaw + (e.clientX - pvDrag.x) * 0.012; });
 pvCanvas.addEventListener('pointerup', () => { pvDrag = null; });
 pvCanvas.addEventListener('pointercancel', () => { pvDrag = null; });
-function renderPreview(dt){
-  if (veil.hidden || homeMain.hidden || !pvMesh) return;
-  const w = pvCanvas.clientWidth | 0, h = pvCanvas.clientHeight | 0;
-  if (!w || !h) return;
+// 구도 — 크기는 가장 큰 모습(왕관·마녀 모자 2.35m)이 'UI 아래 영역' 높이의 78% 가 되게 카메라 거리를 고정하고
+// (모자를 바꿔도 확대·축소가 튀지 않게), 지금 모습의 실제 키 가운데가 그 영역 세로 가운데에 오게 카메라 높이를 정한다.
+// 창 크기가 바뀌어도 잘리지 않는다. 가로는 화면 가운데.
+function frameHome(W, H){
+  const top = Math.max(tabsEl.hidden ? 60 : tabsEl.getBoundingClientRect().bottom + 8, 60), bottom = 20;
+  const avail = Math.max(120, H - top - bottom);
+  const tanH = Math.tan(pvCam.fov * Math.PI / 360);
+  const visH = HOME.charH / (0.78 * avail / H);                 // 화면 전체 높이에 해당하는 세계 높이
+  let D = visH / (2 * tanH);
+  D = Math.min(D, 14);                                           // 칸막이(z=16) 안쪽
+  const visH2 = 2 * D * tanH;
+  const yc = top + avail / 2, shift = (yc - H / 2) / H * visH2;  // 캐릭터 가운데를 화면 아래쪽으로 이만큼
+  const cy = (HOME.top || HOME.charH) / 2 + shift;
+  pvCam.position.set(0, cy, D); pvCam.lookAt(0, cy, 0);
+  return { top, avail, D };
+}
+function renderHome(dt){
+  if (veil.hidden || !pvMesh) return;
+  const W = pvCanvas.clientWidth | 0, H = pvCanvas.clientHeight | 0;
+  if (!W || !H) return;
   const sz = pvR.getSize(new THREE.Vector2());
-  if (sz.x !== w || sz.y !== h){ pvR.setSize(w, h, false); pvCam.aspect = w / h; pvCam.updateProjectionMatrix(); }
-  if (!pvDrag) pvYaw += dt * 0.5;
+  if (sz.x !== W || sz.y !== H){ pvR.setSize(W, H, false); pvCam.aspect = W / H; pvCam.updateProjectionMatrix(); }
+  HOME.t += dt;
+  frameHome(W, H);
+  if (!pvDrag) pvYaw += dt * 0.25;
   pvMesh.rotation.y = pvYaw;
+  pvMesh.scale.y = 1 + Math.sin(HOME.t * 1.7) * 0.012;            // 숨쉬기
+  pvMesh.position.y = Math.sin(HOME.t * 1.7) * 0.004;
+  for (const g of HOME.clouds){ g.position.z -= g.userData.sp * dt; if (g.position.z < -520) g.position.z = -30 - Math.random() * 40; }   // 비행 중
+  for (const m of HOME.sparks) m.material.opacity = 0.25 + 0.65 * Math.max(0, Math.sin(HOME.t * m.userData.sp + m.userData.ph));
+  const blink = 0.35 + 0.65 * Math.pow(Math.max(0, Math.sin(HOME.t * 2.2)), 3);   // 경고등 — 은은한 점멸
+  for (const w of HOME.warn) w.material.color.setRGB(0.35 + 0.65 * blink, 0.12 + 0.12 * blink, 0.08);
+  HOME.warnLight.intensity = 0.15 + 0.7 * blink;
   pvR.render(pvScene, pvCam);
 }
 // 게임 안의 내 모습 — 낙하 중엔 3인칭으로 보이고, 죽거나 이기면 결과 화면 전에 잠깐 비춘다
