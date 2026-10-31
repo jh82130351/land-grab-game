@@ -325,9 +325,10 @@ const SPH = new THREE.SphereGeometry(1, 6, 4);
 // 두 맵이 같이 쓴다. 층 높이 3.4m, 층마다 바닥 콜라이더. 계단은 뒤-왼쪽 구석의 ㄷ자 꺾음 계단 (한 단 0.283m, 플레이어는 걸어서 오른다).
 // 바깥 벽은 문·창 구멍을 뚫은 상자 조각 (구멍은 진짜 빈자리라 밖에서 보이고 쏠 수 있다). 저택은 층마다 방 3개(홀 + 앞방 + 뒷방)와 옥상.
 // 건물마다 길찾기 그래프: 밖 → 문 → 방 → 계단 아래 → 참 → 계단 위 → 위층 방 … → 옥상. 봇은 이 그래프의 최단 경로로 다닌다.
+const STAIR_ZONES = [];                          // 계단 구역 (+ 오르내리는 자리) — 여기선 몸 충돌 반경을 0.3m 로 (07-b)
 const houses = [];                               // 이름은 예전 그대로 — 집·저택 모두. x,z,w,d 는 바깥 벽 기준
 const FLOOR_H = 3.4, SLAB = 0.25, WALL_T = 0.4, RISE = FLOOR_H / 12, STEP_RUN = 0.3;
-const STAIR = { land:1.2, lane:1.4, run:1.8 };   // 참 1.2m · 한 줄 폭 1.4m · 반 층 6단 1.8m
+const STAIR = { land:2.2, lane:1.6, run:1.8, cut:0.6 };   // 참 2.2m · 한 줄 폭 1.6m · 반 층 6단 1.8m · 칸막이는 참 0.6m 앞에서 끊는다 (07-b — 참에서 몸이 꺾을 자리)
 let PS = null;                                   // 이번 맵의 합칠 상자들
 const _pm = new THREE.Matrix4(), _pq = new THREE.Quaternion(), _ps = new THREE.Vector3(), _pv = new THREE.Vector3(), _pe = new THREE.Euler();
 function put(g, x, y, z, sx, sy, sz, c, ry){
@@ -376,11 +377,11 @@ function makeBuilding(o){
   const ix0 = x - hw + WALL_T/2, ix1 = x + hw - WALL_T/2, iz0 = z - hd + WALL_T/2, iz1 = z + hd - WALL_T/2;   // 벽 안쪽 면
   const flights = nf - 1 + (o.roofUp ? 1 : 0);
   const sx = ix0, sz = iz0;                      // 계단 구석 (뒤-왼쪽)
-  const SW = STAIR.land + STAIR.run;             // 계단 구멍 길이 3.0m (참 + 반 층)
+  const SW = STAIR.land + STAIR.run;             // 계단 구멍 길이 4.0m (참 + 반 층)
   const HZ = sz + STAIR.lane*2 + 0.5;            // 계단 구멍 앞 끝 — 줄 A 바깥으로 0.5m 더 비운다 (오르는 몸이 위층 바닥 모서리에 머리를 안 박게)
   const zA = sz + STAIR.lane * 1.5, zB = sz + STAIR.lane * 0.5;   // 올라가는 줄 A(앞) · 내려오는 줄 B(뒤) 가운데
   const top = F(nf), par = o.parapet || 0;
-  const bld = { x, z, w, d, base:g, H:top - g, nf, g, F, roofUp:!!o.roofUp, flights, nodes:[], rooms:[], stair:flights ? { x0:sx, x1:sx + SW, z0:sz, z1:HZ } : null,
+  const bld = { doorX:o.rooms ? sx + 3.0 : x, x, z, w, d, base:g, H:top - g, nf, g, F, roofUp:!!o.roofUp, flights, nodes:[], rooms:[], stair:flights ? { x0:sx, x1:sx + SW, z0:sz, z1:HZ } : null,
                 ix0, ix1, iz0, iz1, top, mansion:!!o.rooms };
   const N = (px, py, pz, kind, fl) => { bld.nodes.push({ x:px, y:py, z:pz, kind, fl, e:[] }); return bld.nodes.length - 1; };
   const E = (a, b) => { bld.nodes[a].e.push(b); bld.nodes[b].e.push(a); };
@@ -398,10 +399,10 @@ function makeBuilding(o){
     } else solid(ix0, ix1, y0, y1, iz0, iz1, c);
   }
   // ── 바깥 벽 (문 · 창 구멍) ──
-  const doorX = o.rooms ? sx + 2.4 : x;
+  const doorX = o.rooms ? sx + 3.0 : x;
   const wy0 = g - 0.6, wy1 = top + par;
   const opsF = [{ a:doorX - 1.0, b:doorX + 1.0, y0:wy0, y1:F(0) + 2.3 }], opsB = [], opsL = [], opsR = [];
-  const xw = sx + 5.0, zs = z;                   // 저택 안벽 (홀 | 오른쪽, 앞방 | 뒷방)
+  const xw = sx + SW + 2.0, zs = z;              // 저택 안벽 (홀 | 오른쪽, 앞방 | 뒷방) — 홀 폭 6m
   for (let k = 0; k < nf; k++){
     const wy = { y0:F(k) + 1.0, y1:F(k) + 2.2 };
     const skFB = o.rooms ? [[xw - 0.8, xw + 0.8]] : [];
@@ -428,7 +429,7 @@ function makeBuilding(o){
       const t = fb + 1.7 + RISE * (i + 1), xb = sx + STAIR.land + STEP_RUN * i;
       solid(xb, xb + STEP_RUN, t - 0.32, t, sz, sz + STAIR.lane, o.stairC);
     }
-    solid(sx + STAIR.land, sx + SW, fb, fb + FLOOR_H + (last ? 1.0 : 0), sz + STAIR.lane - 0.05, sz + STAIR.lane + 0.05, o.trim);   // 두 줄 사이 칸막이
+    solid(sx + STAIR.land + STAIR.cut, sx + SW, fb, fb + FLOOR_H + (last ? 1.0 : 0), sz + STAIR.lane - 0.05, sz + STAIR.lane + 0.05, o.trim);   // 두 줄 사이 칸막이 (참 0.6m 앞에서 끊는다)
     if (last){                                   // 맨 위 — 줄 A 쪽 빈 구멍에 난간
       const L = fb + FLOOR_H;
       solid(sx + SW - 0.05, sx + SW + 0.05, L, L + 1.0, sz + STAIR.lane, HZ, o.trim);
@@ -466,20 +467,22 @@ function makeBuilding(o){
     if (k === nf){                               // 옥상
       rs.push({ n:N(sx + SW + 2.5, y, z + 1, 'roof', k), x0:ix0, x1:ix1, z0:iz0, z1:iz1 });
     } else if (o.rooms){
-      const hall = N(sx + 3.6, y, (HZ + iz1) / 2, 'room', k);
+      const hall = N(sx + SW + 0.8, y, (HZ + iz1) / 2, 'room', k);
       const zF = (zs + iz1) / 2, zBk = (iz0 + zs) / 2, xg = (xw + ix1) / 2;
       const rf = N(xg, y, zF, 'room', k), rb = N(xg, y, zBk, 'room', k);
       const gF = N(xw, y, zF, 'gap', k), gB = N(xw, y, zBk, 'gap', k), gM = N(xg, y, zs, 'gap', k);
       E(hall, gF); E(gF, rf); E(hall, gB); E(gB, rb); E(rf, gM); E(gM, rb);
       rs.push({ n:hall, x0:ix0, x1:xw - 0.1, z0:iz0, z1:iz1 }, { n:rf, x0:xw + 0.1, x1:ix1, z0:zs + 0.1, z1:iz1 }, { n:rb, x0:xw + 0.1, x1:ix1, z0:iz0, z1:zs - 0.1 });
-    } else rs.push({ n:N(Math.max(x, sx + 3.8), y, z + (flights ? 0.6 : 0), 'room', k), x0:ix0, x1:ix1, z0:iz0, z1:iz1 });
+    } else rs.push({ n:N(Math.max(x, sx + SW + 1.0), y, flights ? Math.min(iz1 - 0.8, Math.max(z + 0.6, HZ + 1.2)) : z, 'room', k), x0:ix0, x1:ix1, z0:iz0, z1:iz1 });
     room.push(rs);
   }
   E(door, room[0][0].n);
   for (let k = 0; k < flights; k++){
     const fb = F(k);
-    const aBot = N(sx + 3.6, fb, zA, 'stair', k), mA = N(sx + 0.6, fb + 1.7, zA, 'stair', k + 0.5),
-          mB = N(sx + 0.6, fb + 1.7, zB, 'stair', k + 0.5), bTop = N(sx + 3.6, fb + FLOOR_H, zB, 'stair', k + 1);
+    const lm = sx + STAIR.land / 2;                // 참 가운데 — 꺾는 자리
+    const ax = sx + SW + 0.8;                      // 계단 앞 — 칸막이 끝에서 0.8m (비껴 들어와도 몸이 안 걸린다)
+    const aBot = N(ax, fb, zA, 'stair', k), mA = N(lm, fb + 1.7, zA, 'stair', k + 0.5),
+          mB = N(lm, fb + 1.7, zB, 'stair', k + 0.5), bTop = N(ax, fb + FLOOR_H, zB, 'stair', k + 1);
     E(aBot, mA); E(mA, mB); E(mB, bTop);
     E(aBot, room[k][0].n); E(bTop, room[k + 1][0].n);
     bld.nodes[aBot].up = true;
@@ -489,6 +492,7 @@ function makeBuilding(o){
     if (bTop >= 0 && aBot >= 0) E(bTop, aBot);
   }
   bld.rooms = room;
+  if (bld.stair) STAIR_ZONES.push({ x0:bld.stair.x0 - 0.6, x1:bld.stair.x1 + 1.4, z0:bld.stair.z0 - 0.2, z1:bld.stair.z1 + 0.2 });
   houses.push(bld);
   return bld;
 }
@@ -531,6 +535,8 @@ function locate(x, y, z){
 }
 
 // ══ 맵 배치 ══════════════════════════════════════════════════
+const PLACE_LOG = {}, MANSION_STAGE = [];        // 배치 거부 사유 · 저택이 몇 단계에서 놓였나 (검증용)
+let MANSION_SKIP = 0;                             // 검증용 — 1 이면 1단계, 2 면 1·2단계를 건너뛴다 (보장 단계 시험)
 const ROADS = [];                                // { ax,az,bx,bz, w, paved }
 const STREAMS = [];                              // [[x,z], …] 물길
 function segDist(px, pz, s){                     // 점 → 선분 거리와 t
@@ -649,7 +655,9 @@ function bush(x, y, z, i, c){
   const r = 0.6 + rh(i,19,SEED)*0.7;
   put(SPH, x, y + r*0.35, z, r, r*0.6, r, c);
 }
-const nearHouse = (x, z, m) => houses.some(h => Math.abs(x - h.x) < h.w/2 + m && Math.abs(z - h.z) < h.d/2 + m);
+// 건물 둘레 m 안이거나, 문 앞 7m 통로(폭 5m) 안 — 나무·바위·전봇대가 문을 막지 않게 (07-b)
+const nearHouse = (x, z, m) => houses.some(h => (Math.abs(x - h.x) < h.w/2 + m && Math.abs(z - h.z) < h.d/2 + m)
+  || (Math.abs(x - h.doorX) < 2.5 && z > h.z + h.d/2 && z < h.z + h.d/2 + 7));
 
 // ── 사막: 예전 섬 배치(고리 22채) 를 흙벽·평지붕 집으로. 2층집은 이제 계단이 있다 ──
 function buildDesert(){
@@ -713,21 +721,40 @@ function buildMeadow(){
   }
   for (const s of ROADS) flattenRoad(s);
   const plans = [];
-  const tryPlace = (o) => {
-    if (Math.abs(o.x) > HALF * 0.86 || Math.abs(o.z) > HALF * 0.86) return null;
-    if (rectRoad(o.x, o.z, o.w/2, o.d/2 + 2.5, 2.5)) return null;
-    if (plans.some(p => Math.abs(p.x - o.x) < (p.w + o.w)/2 + 5 && Math.abs(p.z - o.z) < (p.d + o.d)/2 + 7)) return null;
-    if (STREAMS.some(st => st.some(([sx, sz]) => Math.abs(sx - o.x) < o.w/2 + 9 && Math.abs(sz - o.z) < o.d/2 + 9))) return null;
-    const p = placeBuilding(o); if (p) plans.push(p); return p;
+  const why = (o, r) => { const k = (o.rooms ? '저택:' : '집:') + r; PLACE_LOG[k] = (PLACE_LOG[k] || 0) + 1; return null; };
+  const tryPlace = (o, sm = 9) => {
+    if (Math.abs(o.x) > HALF * 0.86 || Math.abs(o.z) > HALF * 0.86) return why(o, '가장자리');
+    if (rectRoad(o.x, o.z, o.w/2, o.d/2 + 2.5, 2.5)) return why(o, '도로');
+    if (plans.some(p => Math.abs(p.x - o.x) < (p.w + o.w)/2 + 5 && Math.abs(p.z - o.z) < (p.d + o.d)/2 + 7)) return why(o, '다른건물');
+    if (STREAMS.some(st => st.some(([sx, sz]) => Math.abs(sx - o.x) < o.w/2 + sm && Math.abs(sz - o.z) < o.d/2 + sm))) return why(o, '개울');
+    const p = placeBuilding(o); if (p) plans.push(p); else why(o, '터(물가)'); return p;
   };
-  // 저택 3~4채 — 큰 길가 (고리 도로 가운데쯤, 길에서 비켜서)
+  // 저택 3~4채 — 매 판 보장 (07-b). 1단계 고리 도로 가 → 2단계 조건 완화(모든 도로, 30~60m, 개울 여유 4m) → 3단계 강제(가장 평평한 빈 땅)
   const nm = 3 + (rh(4, 9, SEED+320) < 0.5 ? 1 : 0);
-  for (let i = 0, got = 0; i < nv * 6 && got < nm; i++){
-    const s = ROADS[(i % nv) * 2], t = 0.35 + rh(i, 10, SEED+320) * 0.3, L = Math.hypot(s.bx - s.ax, s.bz - s.az);
-    const nx = -(s.bz - s.az)/L, nz = (s.bx - s.ax)/L, side = rh(i, 11, SEED+320) < 0.5 ? 1 : -1, off = 22 + rh(i, 12, SEED+320) * 10;
-    const w = 20 + Math.round(rh(i, 13, SEED+320) * 4), d = 15 + Math.round(rh(i, 14, SEED+320) * 2);
-    const x = Math.round(s.ax + (s.bx - s.ax)*t + nx*off*side), z = Math.round(s.az + (s.bz - s.az)*t + nz*off*side);
-    if (tryPlace({ x, z, w, d, nf:3, roofUp:true, rooms:true, wall:[0xe9e4d8, 0xd8d0c0, 0xc7ccd0][got % 3], trim:0x5a5650, roofC:0x6f6a64, floorC:0x8a7a66, stairC:0x7a6a58, roofStyle:'flat', parapet:1.0 })) got++;
+  const mansion = (x, z, w, d, n) => ({ x, z, w, d, nf:3, roofUp:true, rooms:true, wall:[0xe9e4d8, 0xd8d0c0, 0xc7ccd0, 0xdcd4c4][n % 4], trim:0x5a5650, roofC:0x6f6a64, floorC:0x8a7a66, stairC:0x7a6a58, roofStyle:'flat', parapet:1.0 });
+  let got = 0;
+  const along = (s, i, salt, o0, o1, sm) => {
+    const t = 0.25 + rh(i, 10, SEED+salt) * 0.5, L = Math.hypot(s.bx - s.ax, s.bz - s.az);
+    const nx = -(s.bz - s.az)/L, nz = (s.bx - s.ax)/L, side = rh(i, 11, SEED+salt) < 0.5 ? 1 : -1, off = o0 + rh(i, 12, SEED+salt) * (o1 - o0);
+    const w = 20 + Math.round(rh(i, 13, SEED+salt) * 4), d = 15 + Math.round(rh(i, 14, SEED+salt) * 2);
+    return tryPlace(mansion(Math.round(s.ax + (s.bx - s.ax)*t + nx*off*side), Math.round(s.az + (s.bz - s.az)*t + nz*off*side), w, d, got), sm);
+  };
+  for (let i = 0; i < nv * 12 && got < nm && MANSION_SKIP < 1; i++) if (along(ROADS[(i % nv) * 2], i, 320, 22, 34, 9)){ got++; MANSION_STAGE.push(1); }
+  for (let i = 0; i < 160 && got < nm && MANSION_SKIP < 2; i++) if (along(ROADS[i % ROADS.length], i, 321, 30, 60, 4)){ got++; MANSION_STAGE.push(2); }
+  while (got < nm){                              // 강제 — 24m 격자를 훑어 도로·건물에서 떨어진 가장 평평한 땅
+    let best = null, bs = 1e9;
+    for (let gx = -HALF * 0.78; gx <= HALF * 0.78; gx += 24) for (let gz = -HALF * 0.78; gz <= HALF * 0.78; gz += 24){
+      const w = 22, d = 16;
+      if (rectRoad(gx, gz, w/2, d/2 + 2.5, 4) || plans.some(p => Math.abs(p.x - gx) < (p.w + w)/2 + 6 && Math.abs(p.z - gz) < (p.d + d)/2 + 8)) continue;
+      const hs = [[0,0],[-1,-1],[1,-1],[-1,1],[1,1],[0,1.4]].map(([a, b]) => heightAt(gx + a*w/2, gz + b*d/2));
+      if (Math.min(...hs) < SEA_Y + 1.5) continue;
+      const sc = Math.max(...hs) - Math.min(...hs) + (STREAMS.some(st => st.some(([sx, sz]) => Math.hypot(sx - gx, sz - gz) < 20)) ? 5 : 0);
+      if (sc < bs){ bs = sc; best = { gx, gz }; }
+    }
+    if (!best) break;
+    const p = placeBuilding(mansion(best.gx, best.gz, 22, 16, got));
+    if (!p) break;
+    plans.push(p); got++; MANSION_STAGE.push(3);
   }
   // 마을 집 6~9채씩 (1~2층)
   vil.forEach((v, vi) => {
@@ -2357,14 +2384,17 @@ function botDetour(b, a){
 // ══ 이동 ══════════════════════════════════════════════════════
 // 0.6m 까지는 걸어 오른다 (계단 한 단 0.283m · 문턱) — 앞을 막은 게 발밑 0.6m 안의 윗면이면 그 위로 (lastdrop-07)
 const STEP_UP = 0.6;
+const STAIR_R = 0.3;
+const bodyR = (x, z) => { for (const s of STAIR_ZONES) if (x > s.x0 && x < s.x1 && z > s.z0 && z < s.z1) return STAIR_R; return BODY_R; };
 function canStep(e, x, z){
-  if (!blocked(x, e.y, z, BODY_R)) return true;
+  const R = bodyR(x, z);
+  if (!blocked(x, e.y, z, R)) return true;
   let top = e.y;                                 // 몸에 닿는 것 중 걸어 오를 수 있는(윗면이 0.6m 안) 가장 높은 윗면
-  eachColNear(x, z, BODY_R, (c) => {
-    if (c.y1 > e.y && c.y1 <= e.y + STEP_UP && c.y1 > top && x > c.x - c.hw - BODY_R && x < c.x + c.hw + BODY_R && z > c.z - c.hd - BODY_R && z < c.z + c.hd + BODY_R) top = c.y1;
+  eachColNear(x, z, R, (c) => {
+    if (c.y1 > e.y && c.y1 <= e.y + STEP_UP && c.y1 > top && x > c.x - c.hw - R && x < c.x + c.hw + R && z > c.z - c.hd - R && z < c.z + c.hd + R) top = c.y1;
     return false;
   });
-  if (top === e.y || blocked(x, top, z, BODY_R)) return false;   // 그 높이에 섰을 때 몸(발~머리)이 걸리면 못 간다 (천장·벽)
+  if (top === e.y || blocked(x, top, z, R)) return false;   // 그 높이에 섰을 때 몸(발~머리)이 걸리면 못 간다 (천장·벽)
   const f = floorAt(x, z, e.y);
   if (f > e.y) e.y = f;                          // 발밑이 한 단 위면 바로 올라선다
   return true;
