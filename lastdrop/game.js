@@ -1303,25 +1303,71 @@ function houseAt(x, z){
   for (const h of houses) if (Math.abs(x - h.x) < h.w/2 - 0.2 && Math.abs(z - h.z) < h.d/2 - 0.2) return h;
   return null;
 }
-// (tx,tz) 까지 웨이포인트. 집 안을 드나들 땐 문(앞 +z 벽 가운데, 폭 2.4m)으로
-function pathTo(b, tx, tz){
-  const pts = [], hb = houseAt(b.x, b.z), ht = houseAt(tx, tz);
-  if (hb && hb !== ht){                          // 안 → 밖: 안쪽 → 문 중앙 → 문 앞 2m
-    pts.push({ x:hb.x, z:hb.z + hb.d/2 - 1.2 }, { x:hb.x, z:hb.z + hb.d/2 }, { x:hb.x, z:hb.z + hb.d/2 + 2 });
-    if (tz < hb.z + hb.d/2 + 2){                 // 목표가 옆·뒤면 방금 나온 집을 관통하지 않게 모서리를 돈다
-      const cx = tx < hb.x ? hb.x - hb.w/2 - 2 : hb.x + hb.w/2 + 2;
-      pts.push({ x:cx, z:hb.z + hb.d/2 + 2 });
-      if (tz < hb.z - hb.d/2) pts.push({ x:cx, z:hb.z - hb.d/2 - 2 });
+// 선분 a→b 가 집 h(둘레 m 만큼 넓혀서)를 지나가나 — Liang–Barsky
+function segHits(ax, az, bx, bz, h, m){
+  const x0 = h.x - h.w/2 - m, x1 = h.x + h.w/2 + m, z0 = h.z - h.d/2 - m, z1 = h.z + h.d/2 + m;
+  const dx = bx - ax, dz = bz - az;
+  let t0 = 0, t1 = 1;
+  for (const [p, q] of [[-dx, ax - x0], [dx, x1 - ax], [-dz, az - z0], [dz, z1 - az]]){
+    if (Math.abs(p) < 1e-9){ if (q < 0) return false; continue; }
+    const r = q / p;
+    if (p < 0){ if (r > t1) return false; if (r > t0) t0 = r; }
+    else { if (r < t0) return false; if (r < t1) t1 = r; }
+  }
+  return t0 < t1;
+}
+// 집 h 를 피해 a→b 로 가는 모서리 (2m 바깥) 한두 개 — 가장 짧은 쪽
+function cornersAround(ax, az, bx, bz, h){
+  const m = 2, C = [[h.x - h.w/2 - m, h.z - h.d/2 - m], [h.x + h.w/2 + m, h.z - h.d/2 - m], [h.x + h.w/2 + m, h.z + h.d/2 + m], [h.x - h.w/2 - m, h.z + h.d/2 + m]];
+  const D = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1]), A = [ax, az], B = [bx, bz];
+  let best = [], bl = 1e9;
+  for (let i = 0; i < 4; i++){
+    const c = C[i];
+    if (segHits(ax, az, c[0], c[1], h, 0.5)) continue;
+    if (!segHits(c[0], c[1], bx, bz, h, 0.5)){ const L = D(A, c) + D(c, B); if (L < bl){ bl = L; best = [c]; } continue; }
+    for (const j of [(i + 1) % 4, (i + 3) % 4]){
+      const c2 = C[j];
+      if (!segHits(c2[0], c2[1], bx, bz, h, 0.5)){ const L = D(A, c) + D(c, c2) + D(c2, B); if (L < bl){ bl = L; best = [c, c2]; } }
     }
   }
-  if (ht && ht !== hb){                          // 밖 → 안: (뒤·옆이면 모서리를 돌아) 문 앞 2m → 문 중앙 → 안쪽
-    const last = pts.length ? pts[pts.length-1] : b, fz = ht.z + ht.d/2 + 2;
-    if (last.z < fz - 0.5){
-      const cx = last.x < ht.x ? ht.x - ht.w/2 - 2 : ht.x + ht.w/2 + 2;
-      if (last.z < ht.z - ht.d/2) pts.push({ x:cx, z:ht.z - ht.d/2 - 2 });
-      pts.push({ x:cx, z:fz });
+  return best.map(([x, z]) => ({ x, z }));
+}
+// a → g 구간이 집을 관통하면 가장 가까운 집의 모서리로 나누고, 나뉜 구간도 다시 검사한다 (깊이 6 까지)
+function routeSeg(a, g, depth, out){
+  if (depth > 6) return;
+  let hit = null, hd = 1e9;
+  for (const h of houses){
+    if (!segHits(a.x, a.z, g.x, g.z, h, 0.5)) continue;
+    const d = Math.hypot(h.x - a.x, h.z - a.z);
+    if (d < hd){ hd = d; hit = h; }
+  }
+  if (!hit) return;
+  const cs = cornersAround(a.x, a.z, g.x, g.z, hit);
+  if (!cs.length) return;
+  let prev = a;
+  for (const c of cs){ routeSeg(prev, c, depth + 1, out); out.push(c); prev = c; }
+  routeSeg(prev, g, depth + 1, out);
+}
+// (tx,tz) 까지 웨이포인트. 집 안을 드나들 땐 문(앞 +z 벽 가운데, 폭 2.4m)으로,
+// 집 밖 구간이 어느 집이든(나온 집·들어갈 집 포함) 관통하면 그 집 모서리를 돌아간다
+function pathTo(b, tx, tz){
+  const pts = [], hb = houseAt(b.x, b.z), ht = houseAt(tx, tz);
+  if (hb && hb !== ht)                           // 안 → 밖: 안쪽 → 문 중앙 → 문 앞 2m
+    pts.push({ x:hb.x, z:hb.z + hb.d/2 - 1.2 }, { x:hb.x, z:hb.z + hb.d/2 }, { x:hb.x, z:hb.z + hb.d/2 + 2 });
+  if (!(hb && hb === ht)){                       // 같은 집 안이면 바로 간다
+    const goal = ht ? { x:ht.x, z:ht.z + ht.d/2 + 2 } : { x:tx, z:tz };   // 집 안이 목표면 우선 그 집 문 앞 2m
+    let start = pts.length ? pts[pts.length - 1] : { x:b.x, z:b.z };
+    for (const h of houses){                     // 벽·문간에 붙어 서 있으면 먼저 가장 가까운 변 바깥으로 1.2m 빠진다
+      const L = start.x - (h.x - h.w/2), Rr = (h.x + h.w/2) - start.x, B = start.z - (h.z - h.d/2), F = (h.z + h.d/2) - start.z;
+      if (Math.min(L, Rr, B, F) < -0.5) continue;   // 이 집 둘레 0.5m 밖이다
+      const m = Math.min(Math.abs(L), Math.abs(Rr), Math.abs(B), Math.abs(F)), o = 1.7;
+      start = m === Math.abs(F) ? { x:start.x, z:h.z + h.d/2 + o } : m === Math.abs(B) ? { x:start.x, z:h.z - h.d/2 - o }
+            : m === Math.abs(L) ? { x:h.x - h.w/2 - o, z:start.z } : { x:h.x + h.w/2 + o, z:start.z };
+      pts.push(start);
+      break;
     }
-    pts.push({ x:ht.x, z:fz }, { x:ht.x, z:ht.z + ht.d/2 }, { x:ht.x, z:ht.z + ht.d/2 - 1.2 });
+    routeSeg(start, goal, 0, pts);
+    if (ht) pts.push({ x:ht.x, z:ht.z + ht.d/2 + 2 }, { x:ht.x, z:ht.z + ht.d/2 }, { x:ht.x, z:ht.z + ht.d/2 - 1.2 });   // 문 앞 2m → 문 중앙 → 안쪽
   }
   pts.push({ x:tx, z:tz });
   return pts;
@@ -1486,9 +1532,8 @@ function updateBot(b, dt){
     else {
       const dx = b.tx-b.x, dz = b.tz-b.z, d = Math.hypot(dx,dz);
       if (d > 1.5){
-        if (houseAt(b.x, b.z) && !houseAt(b.tx, b.tz)){   // 집 안이면 문으로 나간다
-          const f = nav(b, 'out', b.tx, b.tz); mx = f.mx; mz = f.mz;
-        } else { b.out = null; mx = dx/d; mz = dz/d; }
+        const f = nav(b, 'out', b.tx, b.tz);      // 집 안이면 문으로, 길에 집이 있으면 모서리로
+        mx = f.mx; mz = f.mz;
         b.yaw = Math.atan2(mx, mz); run = outOfZone(b);
       }
     }
