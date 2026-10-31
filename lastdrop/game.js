@@ -35,8 +35,9 @@ const AMMO = {
   '5.56': { n:'5.56mm',   w:0.5,  pick:30 },
   '12g':  { n:'12게이지', w:1.25, pick:10 },
   '7.62': { n:'7.62mm',   w:0.5,  pick:15 },
+  '.50':  { n:'.50',      w:1.5,  pick:10 },   // 보급 상자에만 (lastdrop-08)
 };
-const AMMO_ORDER = ['9mm','5.56','12g','7.62'];
+const AMMO_ORDER = ['9mm','5.56','12g','7.62','.50'];
 const HEAL_W = { band:2, kit:10, med:20, drink:4 };   // 회복템 한 개 무게
 const BAG_CAP = [150, 200, 250, 300];                 // 가방 없음 · Lv1 · Lv2 · Lv3
 // 봇 난이도 — 봇마다 따로 추첨한다. 플레이 중엔 숨기고 킬피드·순위표에만 보인다 (lastdrop-01 문서)
@@ -69,13 +70,34 @@ const FIST = { range:1.6, dmg:12, rate:0.5 };
 const SEED = (Math.random() * 1e6) | 0;
 
 // 무기 — 수치는 여기 한 곳에만 둔다
+// cls 분류(권총 · 주무기 — 핫바는 06 규칙 그대로 자리 제한 없음) · rar 바닥 스폰 가중치 (흔함 3 · 보통 2 · 희귀 1 · 0 = 보급 상자 전용)
+// snd 총소리 [잡음 높이 Hz, 잡음 길이 초, 쿵 소리 시작 Hz] — 총마다 다르게 (lastdrop-08)
+// burst 점사 발수(rate = 점사 안 간격, bgap = 점사 사이) · dbl 쌍발(다 쏘면 바로 재장전) · spd 들고 있을 때 이동 배수
+// zoom 우클릭 시야(°, 없으면 52 · 조준경 총은 20) · ohk 머리에 맞으면 방어구와 상관없이 한 방
 const GUNS = [
-  { k:'pistol', n:'권총',  dmg:22, rate:0.26, mag:15, reload:1.5, kick:0.9, range:55,  spread:0.011, pel:1, auto:0, len:0.26, col:0x6b7078, eff:80, fly:600, lo:0.5, am:'9mm' },
-  { k:'smg',    n:'SMG',   dmg:15, rate:0.075,mag:30, reload:1.9, kick:1.2, range:45,  spread:0.024, pel:1, auto:1, len:0.40, col:0x55606a, eff:70, fly:600, lo:0.5, am:'9mm' },
-  { k:'rifle',  n:'소총',  dmg:29, rate:0.12, mag:30, reload:2.3, kick:1.6, range:130, spread:0.012, pel:1, auto:1, len:0.62, col:0x4a5a4a, eff:250, fly:600, lo:0.65, am:'5.56' },
-  { k:'shot',   n:'샷건',  dmg:13, rate:0.85, mag:5,  reload:2.7, kick:3.0, range:18,  spread:0.060, pel:8, auto:0, len:0.58, col:0x6a523a, fall:1, eff:25, fly:40, lo:0, am:'12g' },
-  { k:'sniper', n:'저격',  dmg:92, rate:1.45, mag:5,  reload:3.0, kick:4.0, range:320, spread:0.002, pel:1, auto:0, len:0.84, col:0x3f4a3f, scope:1, eff:600, fly:600, lo:0.8, am:'7.62' },
+  { k:'pistol', n:'권총',  cls:'권총', rar:3, dmg:22, rate:0.26, mag:15, reload:1.5, kick:0.9, range:55,  spread:0.011, pel:1, auto:0, len:0.26, col:0x6b7078, eff:80, fly:600, lo:0.5, am:'9mm', snd:[1450, 0.16, 210] },
+  { k:'smg',    n:'SMG',   cls:'주무기', rar:2, dmg:15, rate:0.075,mag:30, reload:1.9, kick:1.2, range:45,  spread:0.024, pel:1, auto:1, len:0.40, col:0x55606a, eff:70, fly:600, lo:0.5, am:'9mm', snd:[1550, 0.14, 230] },
+  { k:'rifle',  n:'소총',  cls:'주무기', rar:2, dmg:29, rate:0.12, mag:30, reload:2.3, kick:1.6, range:130, spread:0.012, pel:1, auto:1, len:0.62, col:0x4a5a4a, eff:250, fly:600, lo:0.65, am:'5.56', snd:[1300, 0.20, 190] },
+  { k:'shot',   n:'샷건',  cls:'주무기', rar:3, dmg:13, rate:0.85, mag:5,  reload:2.7, kick:3.0, range:18,  spread:0.060, pel:8, auto:0, len:0.58, col:0x6a523a, fall:1, eff:25, fly:40, lo:0, am:'12g', snd:[900, 0.22, 170] },
+  { k:'sniper', n:'저격',  cls:'주무기', rar:1, dmg:92, rate:1.45, mag:5,  reload:3.0, kick:4.0, range:320, spread:0.002, pel:1, auto:0, len:0.84, col:0x3f4a3f, scope:1, eff:600, fly:600, lo:0.8, am:'7.62', snd:[1700, 0.42, 150] },
+  // ── lastdrop-08 추가 8종 (오퍼스 확정 초기값 · 정현 조정)
+  { k:'revolver', n:'리볼버',      cls:'권총', rar:2, dmg:48, rate:0.55, mag:6,  reload:2.6, kick:2.2, range:60,  spread:0.009, pel:1, auto:0, len:0.30, col:0x8a8f96, eff:60,  fly:600, lo:0.5,  am:'7.62', snd:[1050, 0.30, 140] },
+  { k:'mpist',    n:'기관권총',    cls:'권총', rar:3, dmg:13, rate:0.06, mag:20, reload:1.6, kick:1.0, range:40,  spread:0.028, pel:1, auto:1, len:0.24, col:0x4c5258, eff:40,  fly:600, lo:0.5,  am:'9mm',  snd:[1900, 0.10, 260] },
+  { k:'akr',      n:'돌격소총 K',  cls:'주무기', rar:2, dmg:34, rate:0.11, mag:30, reload:2.5, kick:2.0, range:130, spread:0.014, pel:1, auto:1, len:0.66, col:0x6b4e34, eff:220, fly:600, lo:0.65, am:'7.62', snd:[1150, 0.24, 165] },
+  { k:'burst',    n:'점사소총',    cls:'주무기', rar:2, dmg:30, rate:0.07, mag:30, reload:2.4, kick:1.4, range:130, spread:0.011, pel:1, auto:0, len:0.60, col:0x3e4650, eff:240, fly:600, lo:0.65, am:'5.56', snd:[1400, 0.15, 200], burst:3, bgap:0.3 },
+  { k:'dmr',      n:'지정사수총',  cls:'주무기', rar:1, dmg:55, rate:0.35, mag:10, reload:2.8, kick:2.6, range:220, spread:0.004, pel:1, auto:0, len:0.76, col:0x5a5f48, eff:450, fly:600, lo:0.75, am:'7.62', snd:[1250, 0.32, 155], zoom:37 },
+  { k:'lmg',      n:'경기관총',    cls:'주무기', rar:1, dmg:26, rate:0.085,mag:75, reload:5.0, kick:1.5, range:120, spread:0.020, pel:1, auto:1, len:0.72, col:0x3b3f37, eff:200, fly:600, lo:0.6,  am:'5.56', snd:[1000, 0.20, 135], spd:0.85 },
+  { k:'dbl',      n:'쌍발 샷건',   cls:'주무기', rar:3, dmg:14, rate:0.25, mag:2,  reload:2.2, kick:3.4, range:16,  spread:0.070, pel:9, auto:0, len:0.54, col:0x7a5a3a, fall:1, eff:15, fly:40, lo:0, am:'12g', snd:[780, 0.28, 120], dbl:1 },
+  { k:'amr',      n:'대물저격총',  cls:'주무기', rar:0, dmg:140,rate:2.2,  mag:5,  reload:3.6, kick:5.0, range:350, spread:0.0015,pel:1, auto:0, len:0.98, col:0x2e3530, scope:1, eff:700, fly:800, lo:0.85, am:'.50', snd:[600, 0.60, 90], ohk:1 },
 ];
+const GI = Object.fromEntries(GUNS.map((g, i) => [g.k, i]));   // 총 이름 → 번호
+// 바닥 총 하나 굴리기 — rar 가중치대로 (보급 전용 0 은 안 나온다)
+const RAR_SUM = GUNS.reduce((a, g) => a + g.rar, 0);
+function pickGun(u){
+  let a = 0;
+  for (let i = 0; i < GUNS.length; i++){ a += GUNS[i].rar / RAR_SUM; if (u < a) return i; }
+  return 0;
+}
 const PARTS = [                   // 맞은 자리 배율
   { y0:1.52, y1:1.80, r:0.17, m:2.0,  t:'헤드샷' },
   { y0:0.88, y1:1.52, r:0.31, m:1.0,  t:'' },
@@ -857,12 +879,12 @@ function buildLoot(){
     const lv = (k) => Math.min(3, 1 + ((rh(i, k, SEED) * 3) | 0) + (q === 2 && rh(i, k + 50, SEED) < 0.6 ? 1 : 0));
     let it;
     if (r < 0.34 || (q === 2 && r < 0.44)){
-      let gi = (rh(i,42,SEED) * GUNS.length) | 0;
-      if (q === 2 && GUN_RANK[GUNS[gi].k] < 3) gi = (rh(i,48,SEED) * GUNS.length) | 0;   // 위층은 한 번 더 굴린다 — 소총·저격·SMG 쪽
+      let gi = pickGun(rh(i,42,SEED));
+      if (q === 2 && GUN_RANK[GUNS[gi].k] < 3) gi = pickGun(rh(i,48,SEED));   // 위층은 한 번 더 굴린다 — 소총·저격·SMG 쪽
       it = { kind:LOOT.GUN, gun:gi, ld:GUNS[gi].mag };
     }   // 탄창 1개분 장전된 채로
-    else if (r < 0.56){                          // 탄은 한 종류만 — 총 스폰 비율대로 (9mm 2/5)
-      const am = GUNS[(rh(i,46,SEED) * GUNS.length) | 0].am;
+    else if (r < 0.56){                          // 탄은 한 종류만 — 총 스폰 가중치대로 (lastdrop-08)
+      const am = GUNS[pickGun(rh(i,46,SEED))].am;
       it = { kind:LOOT.AMMO, am, n:AMMO[am].pick };
     }
     else if (r < 0.78) it = { kind:LOOT.HEAL, sub:(rh(i,43,SEED) * 4) | 0, n:1 };
@@ -1012,7 +1034,7 @@ function makeEnts(){
       x:sp.x, z:sp.z, y:heightAt(sp.x, sp.z), vy:0, onGround:true,
       yaw:rh(i,1,SEED)*6.28, fall:0,
       hot:[null,null,null,null,null], sel:0, gb:[],   // 핫바 5칸 · 가방 속 총
-      bag:{ '9mm':0, '5.56':0, '12g':0, '7.62':0 }, bagLv:0,   // 예비탄은 가방에 종류별로
+      bag:Object.fromEntries(AMMO_ORDER.map(k => [k, 0])), bagLv:0,   // 예비탄은 가방에 종류별로
       inv:{ band:2, kit:0, med:0, drink:0 }, healT:0, healKind:null, boost:0,
       helm:0, helmD:0, vest:0, vestD:0, st:0,
       cd:0, reload:0, burst:0, react:0, think:0, tx:0, tz:0, target:null,
@@ -1596,9 +1618,9 @@ function tone(f0, f1, pk, dur, type){
   o.connect(g); g.connect(AU.g); o.start(t); o.stop(t+dur+0.05);
 }
 function sShot(g, far){
-  const v = far ? 0.22 : 1;
-  nz(g.k==='sniper'?1700:g.k==='shot'?900:1300, 0.8, 0.5*v, g.k==='sniper'?0.42:0.2, 'bandpass', 0.8);
-  tone(g.k==='sniper'?150:190, 48, 0.4*v, 0.22, 'square');
+  const v = far ? 0.22 : 1, [f, l, t] = g.snd;   // 총마다 높이·길이가 다르다 (lastdrop-08)
+  nz(f, 0.8, 0.5*v, l, 'bandpass', 0.8);
+  tone(t, 48, 0.4*v, Math.max(0.16, l), 'square');
   if (!far) nz(220, 0.6, 0.2, 0.5, 'lowpass', 0.4);
 }
 const sHit   = () => { nz(2400, 1.4, 0.3, 0.09, 'bandpass'); tone(880, 520, 0.12, 0.07, 'square'); };
@@ -1815,7 +1837,8 @@ function fireFrom(e, dirX, dirY, dirZ){
     const h = rayEnts(ox,oy,oz,dx,dy,dz, ch ? ch.t : w, e);
     const t = h ? h.t : ch ? ch.t : w;
     if (e === me() || far === false) tracer(ox,oy,oz, ox+dx*t, oy+dy*t, oz+dz*t);
-    const dm = h ? g.dmg * h.p.m * rangeMul(g, t) : 0;
+    let dm = h ? g.dmg * h.p.m * rangeMul(g, t) : 0;
+    if (h && g.ohk && h.p.m >= 2) dm = Math.max(dm, (h.e.hp + 1) / (1 - ARMOR[3].cut));   // 대물저격 — 헬멧 3레벨이어도 머리 한 방 (lastdrop-08)
     if (!h && ch){                                  // 지프에 맞았다 — 금속 소리·불꽃, 체력이 깎인다 (잔해는 막기만)
       if (!ch.c.dead) damageCar(ch.c, g.dmg * rangeMul(g, t), e);
       fx(ox+dx*t, oy+dy*t, oz+dz*t, 0.4, 0.12, false);
@@ -1843,10 +1866,24 @@ function myShoot(){                             // 쐈으면(주먹 포함) true
   cam.getWorldDirection(_fd);
   if (!h){ punch(p, _fd.x, _fd.y, _fd.z); return true; }   // 맨손 — 주먹
   if (h.ld <= 0){ startReload(); fireQ = -1e9; return false; }
-  h.ld--; p.cd = GUNS[h.gi].rate;
+  const g = GUNS[h.gi];
+  h.ld--; p.cd = Math.min(0, p.cd) + g.rate;      // 프레임 사이에 넘친 시간을 다음 발로 넘긴다 — 0.06초 총도 표대로 (lastdrop-08)
+  if (g.burst){ p.bn = g.burst - 1; if (!p.bn || h.ld <= 0){ p.bn = 0; p.cd = g.bgap; } }   // 점사 — 나머지는 burstNext 가 이어 쏜다
   fireFrom(p, _fd.x, _fd.y, _fd.z);
+  if (g.dbl && h.ld <= 0) startReload();         // 쌍발 — 두 발 다 쏘면 바로 재장전
   hudGun();
   return true;
+}
+// 점사 이어 쏘기 — 클릭 한 번에 g.burst 발, 마지막 발 뒤엔 g.bgap 쉰다 (lastdrop-08)
+function burstNext(){
+  const p = me(), h = heldGun(p), g = h && GUNS[h.gi];
+  if (!g || !g.burst || p.reload > 0 || p.healT > 0 || h.ld <= 0){ p.bn = 0; return; }
+  cam.getWorldDirection(_fd);
+  h.ld--; p.bn--;
+  p.cd = Math.min(0, p.cd) + (p.bn > 0 && h.ld > 0 ? g.rate : g.bgap);
+  if (h.ld <= 0) p.bn = 0;
+  fireFrom(p, _fd.x, _fd.y, _fd.z);
+  hudGun();
 }
 function punch(e, dx, dy, dz){
   e.cd = FIST.rate;
@@ -1879,7 +1916,7 @@ function cycleSlot(dir){                         // 휠 — 총이 든 칸만 �
   }
 }
 function afterHeld(){                            // 손에 든 게 바뀌었다
-  const p = me(); p.reload = 0; setScope(false); buildView();
+  const p = me(); p.reload = 0; p.bn = 0; setScope(false); buildView();
 }
 function setScope(on){
   const p = me(), hg = heldGun(p);
@@ -1887,7 +1924,7 @@ function setScope(on){
   if (want === scoped) return;
   scoped = want;
   const sn = !!(hg && GUNS[hg.gi].scope);
-  cam.fov = scoped ? (sn ? 20 : 52) : 74;
+  cam.fov = scoped ? (sn ? 20 : (GUNS[hg.gi].zoom || 52)) : 74;   // 지정사수총은 37° — 2배 (lastdrop-08)
   cam.updateProjectionMatrix();
   scopeEl.style.display = (scoped && sn) ? 'block' : 'none';
   crossEl.style.visibility = (scoped && sn) ? 'hidden' : '';   // 저격 배율에선 조준경 십자선만
@@ -1897,21 +1934,70 @@ function setScope(on){
 // ══ 1인칭 총 ══════════════════════════════════════════════════
 let viewGun = null;
 const VIEW_MAT = new THREE.MeshStandardMaterial({ vertexColors:true, roughness:0.55, flatShading:true });
+// 총 모양 — 상자만으로 실루엣을 가른다: 총열 길이·개수, 탄창 모양, 개머리판, 조준경 (lastdrop-08). 손잡이가 원점, 앞이 -z.
+// 1인칭 총과 봇 손의 총이 같은 모양을 쓴다.
+const GUN_DARK = 0x23272c, GUN_WOOD = 0x6a4a30;
+function gunParts(g){
+  const P = [], put = (x,y,z,w,h,d,c) => P.push([x,y,z,w,h,d,c]);
+  const L = g.len, k = g.k, pist = g.cls === '권총', bz = -L/2 - 0.08;
+  // 총열 — 쌍발은 두 줄, 경기관총·대물은 굵게
+  if (k === 'dbl'){ put(-0.029, 0, bz, 0.05, 0.05, L, g.col); put(0.029, 0, bz, 0.05, 0.05, L, g.col); }
+  else { const bw = k === 'lmg' ? 0.075 : k === 'amr' ? 0.065 : k === 'revolver' ? 0.06 : pist ? 0.05 : 0.055; put(0, 0, bz, bw, bw, L, g.col); }
+  // 몸통 · 손잡이
+  put(0, -0.04, 0.03, pist ? 0.07 : 0.085, 0.10, pist ? 0.18 : 0.26, GUN_DARK);
+  put(0, -0.12, 0.10, 0.07, 0.14, 0.075, k === 'revolver' ? GUN_WOOD : GUN_DARK);
+  // 개머리판 — 권총은 없다. 소총류 통짜, SMG·점사는 뼈대(위아래 두 줄), 샷건·돌격소총은 나무
+  if (!pist){
+    const wood = k === 'shot' || k === 'dbl' || k === 'akr';
+    if (k === 'smg' || k === 'burst'){ put(0, -0.01, 0.25, 0.03, 0.03, 0.2, GUN_DARK); put(0, -0.10, 0.25, 0.03, 0.03, 0.2, GUN_DARK); put(0, -0.055, 0.34, 0.035, 0.12, 0.03, GUN_DARK); }
+    else put(0, -0.06, 0.27, 0.06, k === 'amr' || k === 'lmg' ? 0.15 : 0.12, 0.24, wood ? GUN_WOOD : GUN_DARK);
+  }
+  // 탄창
+  if (k === 'revolver') put(0, -0.005, -0.03, 0.10, 0.10, 0.09, 0x5d6168);            // 탄창 대신 둥근 실린더 자리
+  else if (k === 'pistol') {}                                                           // 손잡이 속
+  else if (k === 'mpist') put(0, -0.25, 0.10, 0.045, 0.14, 0.05, GUN_DARK);            // 손잡이 밑으로 길게 나온 탄창
+  else if (k === 'smg') put(0, -0.19, -0.05, 0.04, 0.22, 0.05, GUN_DARK);              // 가늘고 긴 막대
+  else if (k === 'akr'){ put(0, -0.15, -0.06, 0.045, 0.12, 0.07, 0x3a2a1e); put(0, -0.245, -0.10, 0.045, 0.10, 0.07, 0x3a2a1e); }   // 바나나처럼 꺾인 탄창
+  else if (k === 'lmg'){ put(0.02, -0.15, -0.04, 0.13, 0.14, 0.15, 0x4a4a3a); put(0, 0.065, -0.02, 0.09, 0.03, 0.2, GUN_DARK); }   // 큰 상자 탄통 + 덮개
+  else if (k === 'shot') put(0, -0.075, -0.17, 0.055, 0.055, 0.3, GUN_WOOD);           // 펌프
+  else if (k === 'dbl') put(0, -0.06, -0.12, 0.12, 0.05, 0.22, GUN_WOOD);              // 넓은 나무 손받이 · 탄창 없음
+  else if (k === 'amr') put(0, -0.16, -0.08, 0.06, 0.13, 0.11, GUN_DARK);
+  else put(0, -0.15, -0.05, 0.045, k === 'dmr' || k === 'sniper' ? 0.09 : 0.14, 0.07, GUN_DARK);   // 곧은 상자 탄창 (짧으면 10발·5발)
+  // 위 — 조준경 · 손잡이
+  if (g.scope) put(0, 0.075, -0.10, k === 'amr' ? 0.065 : 0.05, k === 'amr' ? 0.065 : 0.05, k === 'amr' ? 0.3 : 0.22, 0x1c1f23);
+  if (k === 'dmr') put(0, 0.07, -0.06, 0.042, 0.042, 0.15, 0x1c1f23);                  // 짧은 2배 조준경
+  if (k === 'burst') put(0, 0.075, 0.0, 0.03, 0.045, 0.16, GUN_DARK);                  // 운반 손잡이
+  // 총구 · 양각대
+  if (k === 'amr') put(0, 0, -L - 0.1, 0.11, 0.07, 0.08, GUN_DARK);                     // 큰 소염기
+  if (k === 'lmg' || k === 'amr'){ put(-0.045, -0.1, -L*0.8, 0.018, 0.17, 0.018, GUN_DARK); put(0.045, -0.1, -L*0.8, 0.018, 0.17, 0.018, GUN_DARK); }
+  return P;
+}
+function gunGeo(g){
+  const ps = [], m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+  for (const [x,y,z,w,h,d,c] of gunParts(g)){ m.compose(new THREE.Vector3(x,y,z), q, s.set(w,h,d)); ps.push({ g:BOX, m:m.clone(), c }); }
+  return merge(ps);
+}
 function buildView(){
   if (viewGun){ cam.remove(viewGun); viewGun.geometry.dispose(); viewGun = null; }
   const hg = heldGun(me());
   if (!hg) return;
-  const g = GUNS[hg.gi];
-  const ps = [], m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3();
-  const put = (x,y,z,w,h,d,c) => { m.compose(new THREE.Vector3(x,y,z), q, s.set(w,h,d)); ps.push({ g:BOX, m:m.clone(), c }); };
-  put(0, 0, -g.len/2 - 0.08, 0.055, 0.055, g.len, g.col);
-  put(0, -0.04, 0.03, 0.085, 0.10, 0.26, 0x23272c);
-  put(0, -0.12, 0.10, 0.07, 0.14, 0.075, 0x23272c);
-  if (g.scope) put(0, 0.075, -0.10, 0.05, 0.05, 0.22, 0x1c1f23);
-  if (g.k === 'shot') put(0, -0.075, -0.17, 0.055, 0.055, 0.3, 0x6a4a30);
-  viewGun = new THREE.Mesh(merge(ps), VIEW_MAT);
+  viewGun = new THREE.Mesh(gunGeo(GUNS[hg.gi]), VIEW_MAT);
   viewGun.position.set(0.18, -0.16, -0.33);
   cam.add(viewGun);
+}
+// 봇 손의 총 — 든 총이 바뀔 때만 모양을 갈아 끼운다 (총마다 한 번 만들어 같이 쓴다)
+const handGeo = [];
+function handGun(e){
+  const h = heldGun(e), gi = h && e.alive ? h.gi : -1;
+  if (e.hgi === gi) return;
+  e.hgi = gi;
+  if (!e.gunM){
+    e.gunM = new THREE.Mesh(BOX, VIEW_MAT);
+    e.gunM.position.set(0.24, 1.12, 0.16); e.gunM.rotation.y = Math.PI;   // 봇 앞이 +z
+    e.mesh.add(e.gunM);
+  }
+  e.gunM.visible = gi >= 0;
+  if (gi >= 0) e.gunM.geometry = handGeo[gi] || (handGeo[gi] = gunGeo(GUNS[gi]));
 }
 
 // ══ 봇 ════════════════════════════════════════════════════════
@@ -1981,7 +2067,7 @@ function botHeal(b, dt){                         // 어려움 이상 — 안 보
 // 건물 안 전리품은 건물 그래프로 드나든다(문 → 방 → 계단 → 위층, lastdrop-07). 8초 동안 웨이포인트를 하나도 못 지나면 그 봇은 그 전리품을 포기한다.
 const LOOT_R = [12, 15, 20, 25, 32, 40];        // 단계별 파밍 반경(시야 무관)
 const PICK_T = [1.5, 1.2, 0.9, 0.7, 0.5, 0.3];  // 줍는 데 걸리는 시간
-const GUN_RANK = { pistol:1, shot:2, sniper:3, smg:3, rifle:4 };
+const GUN_RANK = { pistol:1, mpist:2, revolver:2, shot:2, dbl:2, sniper:3, dmr:3, smg:3, rifle:4, akr:4, burst:4, lmg:4, amr:5 };
 const armedNeed = (g) => Math.min(30, g.mag * 3); // 교전에 나설 탄 — 30발 (샷건·저격은 탄창 3개분)
 const GIVE_UP = 8;
 let lootGiveUps = 0, botPicks = 0, botUpPicks = 0;
@@ -2278,7 +2364,8 @@ function updateBot(b, dt){
   } else if (b.target && b.target.alive && armed){
     const d = Math.hypot(b.target.x-b.x, b.target.z-b.z);
     b.yaw = Math.atan2(b.target.x-b.x, b.target.z-b.z);
-    const want = g ? Math.min(g.range*0.55, 26) : 8;
+    // 싸울 거리 — 경기관총은 중거리에서 제압, 지정사수총·대물저격은 멀리서 (lastdrop-08)
+    const want = !g ? 8 : g.k === 'lmg' ? 32 : (g.k === 'dmr' || g.k === 'amr') ? Math.min(60, T.sight*0.7) : Math.min(g.range*0.55, 26);
     const fx = Math.sin(b.yaw), fz = Math.cos(b.yaw);
     if (b.strafeT === undefined || (b.strafeT -= dt) <= 0){   // 좌우 무빙 방향을 가끔 바꾼다
       b.strafeT = T.move >= 4 ? 0.7 + Math.random()*0.8 : 1e9;
@@ -2309,11 +2396,19 @@ function updateBot(b, dt){
     if (g && b.react <= 0 && b.cd <= 0 && b.reload <= 0 && d < g.range*1.1 && canSee(b, b.target)){
       if (h.ld <= 0){
         if (b.bag[g.am] > 0) b.reload = g.reload;   // 가방에도 없으면 다음 프레임에 다른 총으로 바꾼다
+        b.bn = 0;
         if (T.move >= 5) findCover(b, b.target);
       } else {
         h.ld--;
-        b.cd = g.rate * (g.auto ? 1 : 1.3) + (b.burst-- > 0 ? 0 : rnd(T.rest));
-        if (b.burst <= 0){ b.burst = 2 + ((Math.random()*4)|0); rollAim(b); }
+        // 점사는 3발을 g.rate 간격으로 붙여 쏘고, 쌍발은 두 발을 붙여 쏜 뒤 재장전 — 그 사이엔 쉬지 않는다 (lastdrop-08)
+        const mid = (g.burst && (b.bn = b.bn > 0 ? b.bn - 1 : g.burst - 1) > 0 && h.ld > 0) || (g.dbl && h.ld > 0);
+        const over = Math.min(0, b.cd);         // 프레임 사이에 넘친 시간 (lastdrop-08)
+        if (mid) b.cd = over + g.rate;
+        else {
+          b.bn = 0;
+          b.cd = over + (g.burst ? g.bgap : g.rate * (g.auto ? 1 : 1.3)) + (b.burst-- > 0 ? 0 : rnd(T.rest) * (g.k === 'lmg' ? 0.5 : 1));
+          if (b.burst <= 0){ b.burst = g.k === 'lmg' ? 6 + ((Math.random()*6)|0) : 2 + ((Math.random()*4)|0); rollAim(b); }   // 경기관총 — 길게 긁는다
+        }
         const t = b.target, sh = STANCE[t.st].h;
         const car = t === me() && riding && !riding.dead && T.move >= 4 ? riding : null;   // 어려움 이상 — 탄 사람이면 지프부터
         // 조준점 — 몸통(하드코어는 가끔 머리) + 거리에 비례한 가로·세로 오차
@@ -2353,7 +2448,7 @@ function updateBot(b, dt){
     }
   }
   const ml = Math.hypot(mx, mz); if (ml > 1){ mx /= ml; mz /= ml; }
-  const sp = (run ? 7.4 : 4.3) * dt;
+  const sp = (run ? 7.4 : 4.3) * dt * (heldDef(b)?.spd || 1);   // 경기관총은 봇도 느리다
   if (b.detourT > 0){                          // 우회 중 — 정한 방향으로 잠깐 돌아간다
     b.detourT -= dt;
     mx = Math.sin(b.detourA); mz = Math.cos(b.detourA);
@@ -2420,7 +2515,7 @@ function movePlayer(dt){
   const run = (keys.ShiftLeft || keys.ShiftRight) && p.healT <= 0 && p.st === 0;
   const boostSp = p.boost > 0 ? 1.08 : 1;
   const sp = (p.healT > 0 ? 0 : (run ? RUN : WALK))
-           * STANCE[p.st].spd * (scoped ? 0.55 : 1) * boostSp;
+           * STANCE[p.st].spd * (scoped ? 0.55 : 1) * boostSp * (heldDef(p)?.spd || 1);   // 경기관총 ×0.85
   const y = yawO.rotation.y;
   let mx=0, mz=0;
   if (keys.KeyW){ mx -= Math.sin(y); mz -= Math.cos(y); }
@@ -2615,14 +2710,14 @@ function pickUp(){
   if (!u) return;
   if (u.k === 'car'){ toggleRide(); return; }
   const cc = u.k === 'care' ? u.o : null;
-  if (cc){                                       // 보급 상자 — 저격 · 7.62 · 3레벨 장비 · 구급킷
+  if (cc){                                       // 보급 상자 — 대물저격총 · .50 · 3레벨 장비 · 구급킷 (lastdrop-08 — 예전 저격 대신)
     cc.taken = true; scene.remove(cc.mesh);
-    addGun(p, { gi:4, ld:GUNS[4].mag });
-    for (const it of [{ kind:LOOT.AMMO, am:'7.62', n:15 }, { kind:LOOT.HEAL, sub:2, n:1 }]){
+    addGun(p, { gi:GI.amr, ld:GUNS[GI.amr].mag });
+    for (const it of [{ kind:LOOT.AMMO, am:'.50', n:AMMO['.50'].pick }, { kind:LOOT.HEAL, sub:2, n:1 }]){
       if (takeItem(p, it) !== null) dropItem(it);   // 가방에 안 들어간 만큼은 발밑에
     }
     p.helm = 3; p.helmD = ARMOR[3].dur; p.vest = 3; p.vestD = ARMOR[3].dur;
-    feed('<s>보급</s> 저격 · 3레벨 장비'); sTake(); hudGun();
+    feed('<s>보급</s> 대물저격총 · 3레벨 장비'); sTake(); hudGun();
     return;
   }
   if (nearLoot < 0) return;
@@ -3063,7 +3158,7 @@ function frame(now){
     for (const e of ents){
       if (!e.alive || e.drop !== 'ground') continue;
       if (e.bot) updateBot(e, dt);
-      if (e.mesh){ e.mesh.position.set(e.x, e.y, e.z); e.mesh.rotation.y = e.yaw; e.mesh.scale.y = STANCE[e.st].h; }
+      if (e.mesh){ e.mesh.position.set(e.x, e.y, e.z); e.mesh.rotation.y = e.yaw; e.mesh.scale.y = STANCE[e.st].h; handGun(e); }
     }
   }
   if (playing && !over && (matchState === 'live' || landed)){
@@ -3095,7 +3190,8 @@ function frame(now){
         hudGun();
       }
     }
-    if ((firing || performance.now() - fireQ < FIRE_BUF) && locked && myShoot()) fireQ = -1e9;   // 쿨다운 중 클릭은 0.3초 동안 기다렸다 쏜다
+    if (p.bn > 0){ if (p.cd <= 0) burstNext(); }   // 점사 중엔 클릭과 상관없이 나머지를 쏜다
+    else if ((firing || performance.now() - fireQ < FIRE_BUF) && locked && myShoot()) fireQ = -1e9;   // 쿨다운 중 클릭은 0.3초 동안 기다렸다 쏜다
     // 반동 회복
     const back = Math.min(1, dt*7);
     if (Math.abs(kickP) > 1e-5){ pitO.rotation.x -= kickP*back; kickP *= (1-back); }
@@ -3112,6 +3208,7 @@ function frame(now){
         e.mesh.position.set(e.x, e.y, e.z);
         e.mesh.rotation.y = e.yaw;
         e.mesh.scale.y = STANCE[e.st].h;
+        handGun(e);
       }
       if (live && outOfZone(e)){                 // 매 프레임이 아니라 0.5초마다 모아서
         const dps = ZONE_DPS[Math.min(ZONE_DPS.length-1, zone.phase)];
