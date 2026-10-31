@@ -70,7 +70,7 @@ BR_SRC=~/battle-royale ./deploy.sh
 `node --check lastdrop/game.js` 통과.
 
 ## 새 커밋 해시
-(커밋 후 기록)
+0003e8e — fix(lastdrop-05) 본 커밋
 
 ## 감독 확인 요청 사항 / 남은 이슈
 - 실브라우저(정현): 실제 화면에서 조준점에 맞는지 체감 확인 — 수치상으로는 픽셀 단위로 일치.
