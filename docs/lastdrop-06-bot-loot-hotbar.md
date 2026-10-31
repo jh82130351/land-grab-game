@@ -144,7 +144,7 @@ BR_SRC=~/battle-royale ./deploy.sh
 `node --check lastdrop/game.js` 통과.
 
 ## 새 커밋 해시
-(커밋 후 기록)
+555652f — feat(lastdrop-06) 본 커밋
 
 ## 감독 확인 요청 사항 / 남은 이슈
 - **경기 시간 8~12분 미달** — 위 6절. 자기장 배수와 맵 크기를 함께 결정해 달라.
