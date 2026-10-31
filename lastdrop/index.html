@@ -125,7 +125,29 @@ body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
   background:radial-gradient(ellipse at 50% 38%,rgba(32,24,16,.9),rgba(6,8,10,.96));
   padding-left:max(16px,env(safe-area-inset-left,0px));
   padding-right:max(16px,env(safe-area-inset-right,0px));
-  padding-block:20px;overflow-y:auto;cursor:pointer}
+  padding-block:20px;overflow-y:auto;cursor:default}
+#homeMain,#auth{display:flex;flex-direction:column;gap:10px;align-items:stretch}
+#pv{width:220px;height:250px;align-self:center;cursor:grab;touch-action:none}
+#pv:active{cursor:grabbing}
+#nick{font-size:20px;font-weight:900}
+#nickSub{font-size:12px;color:var(--dim);margin-top:-6px}
+#nickSub:empty{display:none}
+.btns{display:flex;gap:8px;justify-content:center}
+.btns .go{flex:1;text-decoration:none;display:block}
+.btns.sm button{font:inherit;font-size:13px;color:var(--ink);background:rgba(11,15,19,.6);border:1px solid var(--line);
+  padding:7px 16px;cursor:pointer}
+.btns.sm button:hover{border-color:var(--amber)}
+.btns.sm button.hl{border-color:var(--amber);color:var(--amber)}
+button.link{font:inherit;font-size:12px;color:var(--dim);background:none;border:0;text-decoration:underline;cursor:pointer;align-self:center}
+#dress{display:flex;flex-direction:column;gap:8px;text-align:left;border:1px solid var(--line);padding:10px;background:rgba(11,15,19,.6)}
+#dress[hidden]{display:none}
+.drow{display:grid;grid-template-columns:64px 1fr;gap:8px;align-items:center;font-size:12px;color:var(--dim)}
+.dopts{display:flex;flex-wrap:wrap;gap:6px}
+.dopts .sw{width:22px;height:22px;border-radius:50%;border:2px solid rgba(255,255,255,.15);cursor:pointer;padding:0}
+.dopts .sw.on{border-color:var(--amber);box-shadow:0 0 0 2px rgba(255,157,46,.35)}
+.dopts .opt{font:inherit;font-size:12px;color:var(--ink);background:none;border:1px solid var(--line);padding:3px 8px;cursor:pointer}
+.dopts .opt.on{border-color:var(--amber);color:var(--amber)}
+#homeMsg{font-size:12px;color:var(--amber);min-height:1em}
 .card{width:100%;max-width:440px;display:flex;flex-direction:column;gap:15px;text-align:center}
 .card h1{margin:0;font-weight:900;font-size:clamp(34px,9vw,52px);line-height:.95;letter-spacing:-.02em;
   text-wrap:balance;color:#fff;text-shadow:0 0 44px rgba(255,157,46,.4)}
@@ -215,6 +237,22 @@ body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
   <div id="veil">
     <div class="card">
       <h1>라스트 <em>드롭</em></h1>
+      <div id="auth" hidden>
+        <p class="sub">로그인하면 캐릭터 꾸미기와 기록이 계정에 저장됩니다.</p>
+        <div class="btns"><a class="go" id="loginLink" href="/game/?next=/game/lastdrop/">로그인 · 계정 만들기</a></div>
+        <button type="button" class="link" id="guestBtn">로그인 없이 하기</button>
+      </div>
+      <div id="homeMain" hidden>
+        <canvas id="pv" aria-label="내 캐릭터 미리보기 — 끌어서 돌리기"></canvas>
+        <div id="nick"></div><div id="nickSub"></div>
+        <div class="btns"><button class="go" id="play" disabled>섬 만드는 중…</button></div>
+        <div class="btns sm"><button type="button" id="dressBtn">꾸미기</button><button type="button" id="outBtn">로그아웃</button></div>
+        <div id="dress" hidden>
+          <div id="dressRows"></div>
+          <div class="btns sm"><button type="button" id="saveBtn" class="hl">저장</button><button type="button" id="cancelBtn">취소</button></div>
+        </div>
+        <div id="homeMsg" role="status"></div>
+      </div>
       <p class="sub" id="lead">수송기가 <b>1km 섬</b>을 가로지른다. <b>16명</b>이 뛰어내려 총과 방어구를 줍고,
         좁혀 오는 자기장 안으로 들어가 <b>마지막 한 명</b>이 될 때까지 버틴다.
         레드존 폭격과 보급 상자도 떨어진다.</p>
@@ -229,7 +267,6 @@ body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
         <dt>Tab</dt><dd>인벤토리 — 주변·가방·장비, 우클릭 버리기</dd>
         <dt>F</dt><dd>알아서 적당한 회복품 사용 (인벤토리에서 클릭도)</dd>
       </dl>
-      <button class="go" id="play" disabled>섬 만드는 중…</button>
       <div id="rank" hidden></div>
       <div id="stats" hidden></div>
       <div id="board" hidden></div>

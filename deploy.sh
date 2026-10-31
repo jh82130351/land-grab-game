@@ -8,8 +8,12 @@
 #   workspace/games/fps/index.html        ← fps-prototype 레포 index.html
 #   workspace/games/br/index.html         ← battle-royale 레포 br/index.html
 #
+#   valuetopic/game_accounts.py           ← 이 레포 server/game_accounts.py (게임 계정 API, 28 문서)
+#
 # fps-prototype·battle-royale은 별도 레포다. 여기서 받아다 복사만 한다 (24 문서 참조).
-# Flask는 games/ 아래 폴더를 그대로 서빙하므로 app.py는 안 고쳐도 된다 → 재기동 불필요.
+# Flask는 games/ 아래 폴더를 그대로 서빙하므로 게임 파일은 재기동 불필요.
+# 단 game_accounts.py 는 app.py 가 import 하는 파이썬 모듈이라, 바뀌었으면 Flask 재기동이 필요하다(아래에서 알려 준다).
+# 계정 DB 는 valuetopic/data/game_accounts/ 에 있다 — games/ 아래에 두면 /game/ 으로 내려받힌다. 절대 옮기지 말 것.
 set -e
 REPO=$(cd "$(dirname "$0")" && pwd)
 GAMES=/home/jh-happy/.openclaw-mir/workspace/games
@@ -25,6 +29,14 @@ cp "$REPO/voxelcraft/index.html" "$GAMES/voxelcraft/index.html"
 # 라스트 드롭만 파일이 둘이다. Flask 의 /game/<path:fn> 이 game.js 도 그대로 서빙한다.
 cp "$REPO/lastdrop/index.html"   "$GAMES/lastdrop/index.html"
 cp "$REPO/lastdrop/game.js"      "$GAMES/lastdrop/game.js"
+
+# 1-b) 게임 계정 API 모듈 — valuetopic/ 옆으로. 내용이 바뀌었을 때만 복사하고 재기동 안내
+VT=/home/jh-happy/.openclaw-mir/workspace/valuetopic
+if ! cmp -s "$REPO/server/game_accounts.py" "$VT/game_accounts.py"; then
+  python3 -m py_compile "$REPO/server/game_accounts.py"
+  cp "$REPO/server/game_accounts.py" "$VT/game_accounts.py"
+  echo "game_accounts.py 갱신 — Flask 재기동 필요: $VT/flask_server_off.sh && $VT/flask_server_on.sh"
+fi
 
 # 2) FPS — 별도 레포에서 받아온다
 if [ -d "$FPS_SRC/.git" ]; then

@@ -35,6 +35,25 @@
        border:1px solid var(--line);background:#12161d;color:var(--dim)}
   .tag.on{border-color:#2f6b4a;background:#14301f;color:var(--accent)}
 
+  /* 계정 (28 문서) — 로그인 · 계정 만들기 · 게스트 */
+  #who{width:min(880px,100%);display:flex;gap:10px;align-items:center;justify-content:flex-end;
+       font-size:13px;color:var(--dim);margin:-14px 0 14px}
+  #who b{color:#e8edf5}
+  #who button,.auth button.alt{font:inherit;font-size:12.5px;color:var(--dim);background:none;border:1px solid var(--line);
+       border-radius:8px;padding:5px 10px;cursor:pointer}
+  .auth{width:min(380px,100%);border:1px solid var(--line);border-radius:14px;background:var(--panel);
+        padding:20px;display:flex;flex-direction:column;gap:10px}
+  .auth h2{margin:0 0 4px;font-size:18px}
+  .auth label{display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--dim)}
+  .auth input{font:inherit;color:#e8edf5;background:#0f131a;border:1px solid var(--line);border-radius:8px;padding:9px 11px}
+  .auth input:focus{outline:2px solid #2f6b4a;border-color:#2f6b4a}
+  .auth button.main{font:inherit;font-weight:700;color:#0b0e13;background:var(--accent);border:0;border-radius:8px;
+        padding:10px;cursor:pointer}
+  .auth button.main:disabled{opacity:.5;cursor:progress}
+  .auth .err{color:#ff8a7a;font-size:12.5px;min-height:1em}
+  .auth .row{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12.5px;color:var(--dim)}
+  .auth .link{background:none;border:0;color:var(--dim);text-decoration:underline;cursor:pointer;font:inherit;font-size:12px;padding:0}
+  [hidden]{display:none!important}
   footer{width:min(880px,100%);margin-top:30px;color:var(--dim);font-size:12.5px}
   footer a{color:var(--dim);border-bottom:1px solid var(--line)}
 </style>
@@ -42,10 +61,33 @@
 <body>
 <header>
   <h1>게임 선택</h1>
-  <p>브라우저에서 바로 도는 게임들. 설치도 로그인도 없다.</p>
+  <p>브라우저에서 바로 도는 게임들. 설치는 없다 — 로그인하면 꾸미기·기록이 저장된다.</p>
 </header>
 
-<div class="grid" id="grid"></div>
+<div id="who" hidden></div>
+
+<form class="auth" id="loginForm" hidden novalidate>
+  <h2>로그인</h2>
+  <label>아이디<input name="username" autocomplete="username" maxlength="16" required></label>
+  <label>비밀번호<input name="password" type="password" autocomplete="current-password" maxlength="128" required></label>
+  <div class="err" role="alert"></div>
+  <button class="main" type="submit">로그인</button>
+  <div class="row"><span>처음이면</span><button type="button" class="alt" data-go="reg">계정 만들기</button></div>
+  <button type="button" class="link" data-go="guest">로그인 없이 하기</button>
+</form>
+
+<form class="auth" id="regForm" hidden novalidate>
+  <h2>계정 만들기</h2>
+  <label>아이디 (영문·숫자 4~16자)<input name="username" autocomplete="username" maxlength="16" pattern="[A-Za-z0-9]{4,16}" required></label>
+  <label>닉네임 (2~12자)<input name="nickname" autocomplete="nickname" maxlength="12" required></label>
+  <label>비밀번호 (8자 이상)<input name="password" type="password" autocomplete="new-password" maxlength="128" required></label>
+  <label>비밀번호 확인<input name="password2" type="password" autocomplete="new-password" maxlength="128" required></label>
+  <div class="err" role="alert"></div>
+  <button class="main" type="submit">계정 만들기</button>
+  <div class="row"><span>계정이 있으면</span><button type="button" class="alt" data-go="login">로그인</button></div>
+</form>
+
+<div class="grid" id="grid" hidden></div>
 
 <footer><a href="/">ValueTopic으로 돌아가기</a></footer>
 
@@ -127,6 +169,75 @@ for (const g of GAMES) {
   a.append(th, body);
   grid.appendChild(a);
 }
+
+// ── 계정 (28 문서) ─────────────────────────────────────────────
+// 첫 진입: 로그인 화면 → 성공하면 게임 목록. 로그인 유지 30일(서버 쿠키). '로그인 없이 하기' = 게스트(이 탭에서만).
+// ?next=/game/<게임>/ 이면 로그인 뒤 그 게임으로 돌아간다 (다른 주소로는 안 보낸다).
+const $ = (id) => document.getElementById(id);
+const who = $('who'), loginForm = $('loginForm'), regForm = $('regForm');
+const nextUrl = (() => { const n = new URLSearchParams(location.search).get('next') || '';
+  return /^\/game\/[a-z0-9-]+\/$/.test(n) ? n : null; })();
+let csrf = null;
+async function api(path, opt = {}){
+  const h = { 'Content-Type':'application/json' };
+  if (opt.csrf) h['X-CSRF-Token'] = csrf || '';
+  const r = await fetch('/game/api/' + path, { method:opt.method || 'GET', headers:h, credentials:'same-origin',
+                                               body: opt.body ? JSON.stringify(opt.body) : undefined });
+  let j = null; try { j = await r.json(); } catch (e) {}
+  return { ok:r.ok, status:r.status, j };
+}
+function guest(v){ try { if (v === undefined) return sessionStorage.getItem('vtg_guest') === '1';
+  if (v) sessionStorage.setItem('vtg_guest', '1'); else sessionStorage.removeItem('vtg_guest'); } catch (e) {} return false; }
+function view(which, user){                      // 'login' | 'reg' | 'games'
+  loginForm.hidden = which !== 'login'; regForm.hidden = which !== 'reg'; grid.hidden = which !== 'games';
+  who.hidden = which !== 'games';
+  if (which === 'games'){
+    who.replaceChildren();
+    const t = document.createElement('span');
+    if (user){ t.append('로그인: '); const b = document.createElement('b'); b.textContent = user.nickname; t.append(b); }
+    else t.textContent = '게스트 — 꾸미기·기록이 저장되지 않는다';
+    const btn = document.createElement('button'); btn.type = 'button'; btn.textContent = user ? '로그아웃' : '로그인';
+    btn.addEventListener('click', async () => {
+      if (user){ try { await api('logout', { method:'POST', csrf:true }); } catch (e) {} }
+      guest(false); csrf = null; view('login');
+    });
+    who.append(t, btn);
+  } else (which === 'login' ? loginForm : regForm).querySelector('input').focus();
+}
+function done(j){ csrf = j.csrf; guest(false); if (nextUrl) location.href = nextUrl; else view('games', j.user); }
+document.querySelectorAll('[data-go]').forEach(b => b.addEventListener('click', () => {
+  if (b.dataset.go === 'guest'){ guest(true); if (nextUrl) location.href = nextUrl; else view('games', null); }
+  else view(b.dataset.go);
+}));
+async function submit(form, path, body){
+  const err = form.querySelector('.err'), btn = form.querySelector('button.main');
+  err.textContent = ''; btn.disabled = true;
+  try {
+    const r = await api(path, { method:'POST', body });
+    if (r.ok && r.j && r.j.user) done(r.j);
+    else err.textContent = (r.j && r.j.error) || '실패했다 (' + r.status + ')';
+  } catch (e) { err.textContent = '서버에 닿지 않는다'; }
+  btn.disabled = false;
+}
+loginForm.addEventListener('submit', (e) => { e.preventDefault();
+  const f = loginForm.elements; submit(loginForm, 'login', { username:f.username.value.trim(), password:f.password.value }); });
+regForm.addEventListener('submit', (e) => { e.preventDefault();
+  const f = regForm.elements, err = regForm.querySelector('.err');
+  if (!/^[A-Za-z0-9]{4,16}$/.test(f.username.value.trim())){ err.textContent = '아이디는 영문·숫자 4~16자'; return; }
+  if (f.nickname.value.trim().length < 2){ err.textContent = '닉네임은 2~12자'; return; }
+  if (f.password.value.length < 8){ err.textContent = '비밀번호는 8자 이상'; return; }
+  if (f.password.value !== f.password2.value){ err.textContent = '비밀번호 확인이 다르다'; return; }
+  submit(regForm, 'register', { username:f.username.value.trim(), nickname:f.nickname.value.trim(),
+                                password:f.password.value, password2:f.password2.value });
+});
+(async () => {
+  try {
+    const r = await api('me');
+    if (r.ok && r.j && r.j.user){ csrf = r.j.csrf; if (nextUrl) location.href = nextUrl; else view('games', r.j.user); return; }
+    if (!r.ok){ view('games', null); return; }   // 계정 서버가 없거나 고장 — 게임은 막지 않는다
+  } catch (e) { view('games', null); return; }
+  if (guest() && !nextUrl) view('games', null); else view('login');
+})();
 
 for (let k = 0; k < SOON; k++) {
   const d = document.createElement('div');

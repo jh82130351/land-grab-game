@@ -372,6 +372,43 @@ function makeBotGeo(){
   put(1.56, 0.34, 0.12, 0.34, 0x2f3a46);
   botGeo = merge(ps);
 }
+// ══ 캐릭터 꾸미기 (28 문서) ══════════════════════════════════
+// 형태와 색으로만 — 텍스처 없음. 항목마다 프리셋 번호를 저장한다.
+// 개수는 서버 game_accounts.py 의 AVATAR_SPEC 과 같아야 한다 (skin 8 · hair 3 · hairColor 8 · top 8 · bottom 8 · hat 4 · bag 8).
+const AV = {
+  skin:      { n:'피부',      c:[0xf6d7b8,0xeec39a,0xdcaa7e,0xc68e5f,0xa8703f,0x8a5532,0x6b3d24,0x4a2a19] },
+  hair:      { n:'머리 모양', s:['짧은 머리','긴 머리','뾰족 머리'] },
+  hairColor: { n:'머리 색',   c:[0x1c1a19,0x4a3020,0x7a4f2c,0xd9b46a,0xb5462c,0x9a9a9a,0x3d5fa8,0xd77fa8] },
+  top:       { n:'상의',      c:[0xb4552f,0x2f6f9a,0x3d7a3a,0xd9c25a,0x7a3d8a,0xe8e4dc,0x2b2b2b,0xd1495b] },
+  bottom:    { n:'하의',      c:[0x2f3a46,0x4b5a3a,0x6b5a46,0x1f2a44,0x8a8a8a,0x2b2b2b,0x7a2f2f,0xc9b38a] },
+  hat:       { n:'모자',      s:['없음','캡','헬멧형','비니'] },
+  bag:       { n:'가방',      c:[0x5b4a32,0x3a4a5b,0x4b5a3a,0x8a3a2a,0x2b2b2b,0xc9b38a,0x7a3d8a,0x2f6f9a] },
+};
+const AV_KEYS = Object.keys(AV);
+const AV_DEFAULT = { skin:1, hair:0, hairColor:1, top:0, bottom:0, hat:0, bag:0 };
+const avValid = (a) => !!a && AV_KEYS.every(k => Number.isInteger(a[k]) && a[k] >= 0 && a[k] < (AV[k].c || AV[k].s).length);
+function avatarGeo(a){                           // 발이 원점, 앞이 +z
+  const ps = [], m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+  const put = (x, y, z, w, h, d, c) => { m.compose(new THREE.Vector3(x, y + h/2, z), q, s.set(w, h, d)); ps.push({ g:BOX, m:m.clone(), c }); };
+  const skin = AV.skin.c[a.skin], hc = AV.hairColor.c[a.hairColor], top = AV.top.c[a.top], bot = AV.bottom.c[a.bottom], bag = AV.bag.c[a.bag];
+  put(-0.07, 0.06, 0, 0.12, 0.82, 0.2, bot); put(0.07, 0.06, 0, 0.12, 0.82, 0.2, bot);              // 다리
+  put(-0.07, 0, 0.03, 0.13, 0.08, 0.26, 0x2a2622); put(0.07, 0, 0.03, 0.13, 0.08, 0.26, 0x2a2622);  // 신발
+  put(0, 0.88, 0, 0.5, 0.6, 0.28, top);                                                              // 몸통
+  put(-0.32, 1.0, 0, 0.13, 0.46, 0.16, top); put(0.32, 1.0, 0, 0.13, 0.46, 0.16, top);              // 팔
+  put(-0.32, 0.88, 0, 0.11, 0.12, 0.12, skin); put(0.32, 0.88, 0, 0.11, 0.12, 0.12, skin);          // 손
+  put(0, 1.48, 0, 0.12, 0.06, 0.12, skin); put(0, 1.54, 0, 0.28, 0.28, 0.28, skin);                 // 목 · 머리
+  put(-0.06, 1.66, 0.141, 0.04, 0.04, 0.01, 0x1a1a1a); put(0.06, 1.66, 0.141, 0.04, 0.04, 0.01, 0x1a1a1a);   // 눈
+  if (a.hair === 0){ put(0, 1.80, 0, 0.3, 0.06, 0.3, hc); put(0, 1.62, -0.13, 0.3, 0.2, 0.05, hc); }
+  else if (a.hair === 1){ put(0, 1.80, 0, 0.3, 0.07, 0.3, hc); put(0, 1.36, -0.14, 0.32, 0.46, 0.06, hc);
+    put(-0.145, 1.5, -0.01, 0.03, 0.3, 0.26, hc); put(0.145, 1.5, -0.01, 0.03, 0.3, 0.26, hc); }
+  else { put(0, 1.80, 0, 0.29, 0.05, 0.29, hc); for (let i = 0; i < 4; i++) put(0, 1.84, -0.11 + i*0.075, 0.07, 0.12 - Math.abs(i - 1.5)*0.02, 0.06, hc); }
+  if (a.hat === 1){ put(0, 1.79, 0, 0.31, 0.1, 0.31, 0x24324a); put(0, 1.79, 0.2, 0.27, 0.025, 0.14, 0x24324a); }        // 캡
+  else if (a.hat === 2){ put(0, 1.72, 0, 0.36, 0.2, 0.36, 0x4b5a3a); put(0, 1.70, 0.17, 0.3, 0.04, 0.06, 0x3d4a30); }    // 헬멧형
+  else if (a.hat === 3){ put(0, 1.76, 0, 0.31, 0.14, 0.31, 0xb03a3a); put(0, 1.9, 0, 0.08, 0.06, 0.08, 0xe8e4dc); }      // 비니
+  put(0, 0.98, -0.24, 0.38, 0.44, 0.16, bag);                                                        // 가방
+  put(-0.15, 0.95, 0.145, 0.05, 0.52, 0.02, bag); put(0.15, 0.95, 0.145, 0.05, 0.52, 0.02, bag);    // 멜빵
+  return merge(ps);
+}
 function spawnPoint(i){
   for (let t=0;t<80;t++){
     const a = (i/N_ENT)*Math.PI*2 + rh(i,t,SEED+51)*1.1;
@@ -2130,7 +2167,7 @@ function finish(won){
   if (invOpen) closeInv(true);
   pauseEl.hidden = true;
   playBtn.disabled = false;
-  veil.hidden = false;
+  endAt = performance.now() + 2800; endWon = !!won;   // 2.8초 동안 내 캐릭터를 비추고 결과 화면 (updateMyView)
   if (won) sKill(); else sHurt();
 }
 
@@ -2326,6 +2363,8 @@ function frame(now){
     }
   }
   updateFx(dt);
+  updateMyView(dt);
+  renderPreview(dt);
   sun.position.set(me().x - 180, 150, me().z + 120);
   sun.target.position.set(me().x, 0, me().z);
   sun.target.updateMatrixWorld();
@@ -2334,6 +2373,140 @@ function frame(now){
 
 // ══ 시작 ══════════════════════════════════════════════════════
 let elapsed = 0;
+// ══ 홈 화면 · 계정 (28 문서) ═════════════════════════════════
+// /game/api/me 로 로그인을 확인한다. 로그인 → 내 캐릭터 미리보기 · [게임 시작] [꾸미기] [로그아웃].
+// 아니면 로그인 안내 + '로그인 없이 하기'(게스트 — 꾸미기·기록 저장 안 됨). 계정 서버에 못 닿으면 게스트로.
+// 화면에 넣는 글자는 전부 textContent 다.
+const acct = { user:null, csrf:null, guest:false, online:true, avatar:{ ...AV_DEFAULT }, saved:{ ...AV_DEFAULT } };
+const authEl = document.getElementById('auth'), homeMain = document.getElementById('homeMain');
+const nickEl = document.getElementById('nick'), nickSub = document.getElementById('nickSub');
+const dressBtn = document.getElementById('dressBtn'), outBtn = document.getElementById('outBtn');
+const dressEl = document.getElementById('dress'), dressRows = document.getElementById('dressRows'), homeMsg = document.getElementById('homeMsg');
+async function api(path, opt = {}){
+  const h = { 'Content-Type':'application/json' };
+  if (opt.csrf) h['X-CSRF-Token'] = acct.csrf || '';
+  const r = await fetch('/game/api/' + path, { method:opt.method || 'GET', headers:h, credentials:'same-origin',
+                                               body: opt.body ? JSON.stringify(opt.body) : undefined });
+  let j = null; try { j = await r.json(); } catch (e) {}
+  return { ok:r.ok, status:r.status, j };
+}
+function guestFlag(v){
+  try { if (v === undefined) return sessionStorage.getItem('vtg_guest') === '1';
+        if (v) sessionStorage.setItem('vtg_guest', '1'); else sessionStorage.removeItem('vtg_guest'); } catch (e) {}
+  return false;
+}
+async function initHome(){
+  let me = null;
+  try { const r = await api('me'); if (r.ok && r.j) me = r.j; else acct.online = false; } catch (e) { acct.online = false; }
+  if (me && me.user){
+    acct.user = me.user; acct.csrf = me.csrf;
+    try { const r = await api('lastdrop/avatar'); if (r.ok && r.j && avValid(r.j.avatar)) acct.avatar = { ...r.j.avatar }; } catch (e) {}
+  } else acct.guest = guestFlag() || !acct.online;
+  acct.saved = { ...acct.avatar };
+  showHome();
+}
+function showHome(){
+  const signed = !!acct.user, inn = signed || acct.guest;
+  authEl.hidden = inn; homeMain.hidden = !inn;
+  nickEl.textContent = signed ? acct.user.nickname : '게스트';
+  nickSub.textContent = signed ? '' : acct.online ? '꾸미기·기록이 저장되지 않는다' : '계정 서버에 닿지 않는다 — 게스트로 한다';
+  outBtn.textContent = signed ? '로그아웃' : '로그인';
+  setAvatar(acct.avatar);
+}
+document.getElementById('guestBtn').addEventListener('click', () => { guestFlag(true); acct.guest = true; showHome(); });
+outBtn.addEventListener('click', async () => {
+  if (acct.user){ try { await api('logout', { method:'POST', csrf:true }); } catch (e) {} }
+  guestFlag(false);
+  location.href = '/game/?next=/game/lastdrop/';
+});
+// 꾸미기 — 항목마다 프리셋 버튼. 바꾸면 미리보기에 바로, [저장] 하면 서버에
+function buildDress(){
+  dressRows.replaceChildren(...AV_KEYS.map(k => {
+    const row = document.createElement('div'); row.className = 'drow';
+    const lb = document.createElement('span'); lb.textContent = AV[k].n; row.appendChild(lb);
+    const opts = document.createElement('div'); opts.className = 'dopts';
+    (AV[k].c || AV[k].s).forEach((v, i) => {
+      const b = document.createElement('button'); b.type = 'button';
+      if (AV[k].c){ b.className = 'sw'; b.style.background = '#' + v.toString(16).padStart(6, '0'); b.title = AV[k].n + ' ' + (i + 1); }
+      else { b.className = 'opt'; b.textContent = v; }
+      if (acct.avatar[k] === i) b.classList.add('on');
+      b.addEventListener('click', () => { acct.avatar[k] = i; setAvatar(acct.avatar); buildDress(); });
+      opts.appendChild(b);
+    });
+    row.appendChild(opts);
+    return row;
+  }));
+}
+dressBtn.addEventListener('click', () => { dressEl.hidden = false; homeMsg.textContent = ''; buildDress(); });
+document.getElementById('cancelBtn').addEventListener('click', () => {
+  acct.avatar = { ...acct.saved }; setAvatar(acct.avatar); dressEl.hidden = true;
+});
+document.getElementById('saveBtn').addEventListener('click', async () => {
+  if (!acct.user){ acct.saved = { ...acct.avatar }; dressEl.hidden = true; homeMsg.textContent = '게스트는 저장되지 않는다 — 이번 접속에서만'; return; }
+  homeMsg.textContent = '저장 중…';
+  try {
+    const r = await api('lastdrop/avatar', { method:'PUT', csrf:true, body:{ avatar:acct.avatar } });
+    if (r.ok){ acct.saved = { ...acct.avatar }; dressEl.hidden = true; homeMsg.textContent = '저장했다'; }
+    else homeMsg.textContent = (r.j && r.j.error) || '저장하지 못했다';
+  } catch (e) { homeMsg.textContent = '저장하지 못했다 — 연결을 확인해라'; }
+});
+// 미리보기 — 홈·결과 화면에서만 그린다. 천천히 돌고, 끌면 돌린다
+const pvCanvas = document.getElementById('pv');
+const pvR = new THREE.WebGLRenderer({ canvas:pvCanvas, antialias:true, alpha:true });
+pvR.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+const pvScene = new THREE.Scene();
+pvScene.add(new THREE.HemisphereLight(0xdfe8ff, 0x3a3328, 1.15));
+const pvSun = new THREE.DirectionalLight(0xffffff, 1.5); pvSun.position.set(2, 4, 3); pvScene.add(pvSun);
+const pvCam = new THREE.PerspectiveCamera(30, 1, 0.1, 20); pvCam.position.set(0, 1.2, 4.4); pvCam.lookAt(0, 0.95, 0);
+let pvMesh = null, pvYaw = 0.6, pvDrag = null, myAvatar = null, myChute = null;
+function setAvatar(a){
+  if (!avValid(a)) a = AV_DEFAULT;
+  if (pvMesh){ pvMesh.geometry.dispose(); pvMesh.geometry = avatarGeo(a); }
+  else { pvMesh = new THREE.Mesh(avatarGeo(a), BOT_MAT); pvScene.add(pvMesh); }
+  if (myAvatar){ myAvatar.geometry.dispose(); myAvatar.geometry = avatarGeo(a); }
+}
+pvCanvas.addEventListener('pointerdown', (e) => { pvDrag = { x:e.clientX, yaw:pvYaw }; pvCanvas.setPointerCapture(e.pointerId); });
+pvCanvas.addEventListener('pointermove', (e) => { if (pvDrag) pvYaw = pvDrag.yaw + (e.clientX - pvDrag.x) * 0.012; });
+pvCanvas.addEventListener('pointerup', () => { pvDrag = null; });
+pvCanvas.addEventListener('pointercancel', () => { pvDrag = null; });
+function renderPreview(dt){
+  if (veil.hidden || homeMain.hidden || !pvMesh) return;
+  const w = pvCanvas.clientWidth | 0, h = pvCanvas.clientHeight | 0;
+  if (!w || !h) return;
+  const sz = pvR.getSize(new THREE.Vector2());
+  if (sz.x !== w || sz.y !== h){ pvR.setSize(w, h, false); pvCam.aspect = w / h; pvCam.updateProjectionMatrix(); }
+  if (!pvDrag) pvYaw += dt * 0.5;
+  pvMesh.rotation.y = pvYaw;
+  pvR.render(pvScene, pvCam);
+}
+// 게임 안의 내 모습 — 낙하 중엔 3인칭으로 보이고, 죽거나 이기면 결과 화면 전에 잠깐 비춘다
+let endAt = 0, endWon = false;                  // 결과 화면을 띄울 시각 (performance.now) — 프레임이 느려도 2.8초
+const CAM_FP = new THREE.Vector3(0, 0, 0), CAM_TP = new THREE.Vector3(0, 1.1, 5.5);
+function updateMyView(dt){
+  const p = me(), air = playing && (p.drop === 'free' || p.drop === 'chute');
+  const endT = endAt ? (endAt - performance.now()) / 1000 : 0;
+  const show = air || endT > 0;
+  if (myAvatar){
+    myAvatar.visible = show;
+    if (show){
+      myAvatar.position.set(p.x, p.y, p.z);
+      if (endT > 0) myAvatar.rotation.set(endWon ? 0 : -Math.PI/2 * Math.min(1, (2.8 - endT) * 2.5), endWon ? myAvatar.rotation.y + dt*2 : yawO.rotation.y + Math.PI, 0, 'YXZ');
+      else myAvatar.rotation.set(p.drop === 'free' ? 1.2 : 0, yawO.rotation.y + Math.PI, 0, 'YXZ');   // 자유낙하는 엎드려서
+    }
+  }
+  if (!myChute){ myChute = chuteMesh(); myChute.visible = false; scene.add(myChute); }
+  myChute.visible = air && p.drop === 'chute';
+  if (myChute.visible) myChute.position.set(p.x, p.y + 4.4, p.z);
+  cam.position.copy(show ? CAM_TP : CAM_FP);
+  if (viewGun) viewGun.visible = !show && !(scoped && heldDef(me()) && heldDef(me()).scope);
+  crossEl.style.visibility = show || (scoped && heldDef(me()) && heldDef(me()).scope) ? 'hidden' : '';   // 3인칭엔 조준점 없음
+  if (endT > 0){                                 // 결과 화면 전 — 내 캐릭터를 중심으로 천천히 돈다
+    yawO.position.set(p.x, p.y + 1.2, p.z); yawO.rotation.y += dt * 0.6; pitO.rotation.x = -0.45;
+    yawO.updateMatrixWorld(true); cam.lookAt(p.x, p.y + 0.4, p.z);   // 판이 끝났으니 카메라 각도는 되돌리지 않는다
+  }
+  else if (endAt){ endAt = 0; veil.hidden = false; hudEl.hidden = true; }
+}
+
 function boot(){
   buildTerrain();
   buildProps();
@@ -2355,8 +2528,9 @@ function boot(){
   pitO.rotation.x = -0.45;
   resize();
   hudGun();
+  myAvatar = new THREE.Mesh(avatarGeo(acct.avatar), BOT_MAT); myAvatar.visible = false; scene.add(myAvatar);
   playBtn.disabled = false;
-  playBtn.textContent = '낙하';
+  playBtn.textContent = '게임 시작';
   requestAnimationFrame(frame);
 }
 function start(){
@@ -2369,5 +2543,6 @@ function start(){
   lockMouse();
 }
 playBtn.addEventListener('click', (e) => { e.stopPropagation(); start(); });
-veil.addEventListener('click', () => { if (!playBtn.disabled) start(); });
+// (예전엔 시작 화면 아무 데나 눌러도 시작했다 — 꾸미기 버튼과 겹쳐 [게임 시작] 으로만)
 boot();
+initHome();
