@@ -2741,7 +2741,8 @@ async function matchEnd(place){
   const body = { token:tok, place, kills, shots, hits, survival: Math.round((performance.now() - matchStartedAt) / 100) / 10 };
   try {
     const r = await api('lastdrop/match/end', { method:'POST', csrf:true, body });
-    if (r.ok){ coinMsg.textContent = r.j.coins ? '+' + r.j.coins + ' 코인' : '기록했다 · 코인 없음 (4등 안에 들면 코인)';
+    if (r.ok && r.j.status === 'short'){ coinMsg.textContent = '30초 미만 판은 기록되지 않습니다'; coinMsg.classList.remove('got'); }
+    else if (r.ok){ coinMsg.textContent = r.j.coins ? '+' + r.j.coins + ' 코인' : '기록했다 · 코인 없음 (4등 안에 들면 코인)';
                coinMsg.classList.toggle('got', !!r.j.coins); await loadAccount(); }
     else coinMsg.textContent = '기록되지 않았다 — ' + ((r.j && r.j.error) || r.status);
   } catch (e) { coinMsg.textContent = '기록하지 못했다 — 연결을 확인해라'; }

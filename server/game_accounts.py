@@ -62,7 +62,7 @@ SHOP = {
 # 코인 — 순위별 (1~4등), 5등 이하 0. 매치 검증 (29 문서)
 COIN_BY_PLACE = {1: 10, 2: 3, 3: 2, 4: 1}
 N_PLAYERS = 16
-MIN_MATCH = 180            # 판 길이 최소 3분 (서버가 잰 토큰 발급 ~ 결과 제출)
+MIN_MATCH = 30             # 판 길이 30초 미만은 기록·코인 없음 (서버가 잰 토큰 발급 ~ 결과 제출, 판 길이 규칙 최종)
 TOKEN_TTL = 3600           # 토큰은 1시간 안에 써야 한다
 MAX_PER_HOUR = 12          # 계정당 시간당 기록되는 판 수 — 13번째부터 거부
 MAX_TOKENS_PER_HOUR = 40   # 토큰 발급 남용 방지
@@ -450,17 +450,18 @@ def match_end():
             return no('bad_shots', '명중 수가 이상하다')
         if not isinstance(surv, (int, float)) or isinstance(surv, bool) or not 0 <= surv <= elapsed + 5:
             return no('bad_survival', '생존 시간이 이상하다')
-        if place <= 4 and surv < MIN_MATCH - 30:           # 4등 안이면 판 대부분을 살아 있었어야 한다 (30 검토)
-            return no('bad_survival', '4등 안인데 생존 시간이 너무 짧다')
-        status, coins, why = 'ok', COIN_BY_PLACE.get(place, 0), None
-        if elapsed < MIN_MATCH:
-            if place <= 4:                                  # 3분도 안 돼 4등 안 — 있을 수 없다
-                return no('too_short', '판이 너무 짧다 (3분 미만)')
-            status, coins, why = 'nocoin', 0, 'too_short'   # 일찍 죽은 판 — 전적만 (어차피 코인 0)
-        recent = conn.execute("SELECT COUNT(*) FROM matches WHERE user_id=? AND status IN ('ok','nocoin','capped') AND ended_ts>?",
+        # 판 길이 규칙 (최종) — 30초 미만: 기록·코인 없음 / 30초 이상: 기록 + 순위대로 코인. 순위별 최소 시간 검사는 없다.
+        # 30초 미만 판도 토큰은 쓰이고(status 'short') 시간당 판 수에 들어간다.
+        recent = conn.execute("SELECT COUNT(*) FROM matches WHERE user_id=? AND status IN ('ok','nocoin','capped','short') AND ended_ts>?",
                               (u['id'], now - 3600)).fetchone()[0]
         if recent >= MAX_PER_HOUR:                         # 시간당 13번째 판부터는 기록·코인 모두 거부 (30 검토)
             return no('hourly_cap', '시간당 %d판까지만 기록된다' % MAX_PER_HOUR)
+        if elapsed < MIN_MATCH:
+            conn.execute("UPDATE matches SET status='short', ended_ts=? WHERE id=? AND status='open'", (now, m['id']))
+            conn.execute("DELETE FROM matches WHERE user_id=? AND status='short' AND ended_ts<?", (u['id'], now - 3600))   # 시간당 판 수 세는 데만 쓴다
+            conn.commit()
+            return jsonify({'coins': 0, 'total': _coins(conn, u['id']), 'status': 'short', 'why': 'too_short'})
+        status, coins, why = 'ok', COIN_BY_PLACE.get(place, 0), None
         _totals(conn, u['id'])                         # 누적 행이 없으면 기존 기록으로 먼저 채운다 — 이번 판을 기록하기 '전에'
         conn.execute('UPDATE matches SET status=?, ended_ts=?, place=?, kills=?, survival=?, shots=?, hits=?, coins=? '
                      "WHERE id=? AND status='open'",
