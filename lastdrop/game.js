@@ -108,14 +108,66 @@ function fbm(x, z, s, o){
   for (let i=0;i<o;i++){ t += n2(x*f, z*f, s+i*131)*a; nn+=a; f*=2; a*=0.5; }
   return t/nn;
 }
-// 지형 높이 — 넓은 기복 + 둔덕 + 잔굴곡. 시야를 끊는 산은 안 만든다.
+// ══ 맵 정의 (lastdrop-07) ════════════════════════════════════
+// 맵마다 지형 함수 · 땅 색 · 하늘 · 안개 · 조명 · 배치(건물·식생·도로) 를 여기 둔다. 게임 규칙·로직은 공유한다.
+const EDGE = (x, z) => { const e = Math.max(Math.abs(x), Math.abs(z)) / HALF, k = e > 0.86 ? (e - 0.86) / 0.14 : 0; return k * k * 34; };   // 가장자리는 바다로
+const MAPS = {
+  desert: {
+    name:'사막', desc:'모래 둔덕과 흙벽 마을 — 노을 아래 선인장 사이를 누빈다.',
+    sky:{ lo:0xc98b4a, hi:0x1d2b42 }, fog:{ c:0xa8794a, near:90, far:470 }, hemi:[0xcfd8e8, 0x3a3326, 0.75], sun:[0xffd0a0, 1.25], sea:0x2b4a5e,
+    base(x, z){                                   // 넓은 기복 + 모래 둔덕 + 잔굴곡
+      const dune = Math.max(0, Math.sin((x * 0.8 + z * 0.6) / 34 + fbm(x/120, z/120, SEED+5, 2) * 4)) * 2.6;
+      return fbm(x/230, z/230, SEED+11, 3) * 20 + fbm(x/70, z/70, SEED+37, 3) * 6 + fbm(x/22, z/22, SEED+73, 2) * 1.4 + dune - 13 - EDGE(x, z);
+    },
+    ground(x, z, h){                              // 모래 · 황토 · 바위빛
+      const SAND = [0.76, 0.62, 0.40], OCHRE = [0.66, 0.46, 0.26], ROCK = [0.55, 0.42, 0.30], WET = [0.62, 0.55, 0.40];
+      if (h < -6) return WET;
+      if (h > 9) return ROCK;
+      return rh((x*3)|0, (z*3)|0, SEED+5) > 0.6 ? OCHRE : SAND;
+    },
+  },
+  meadow: {
+    name:'초원', desc:'초록 구릉과 숲, 도로로 이어진 마을과 3층 저택 — 개울은 걸어서 건넌다.',
+    sky:{ lo:0xd9ecf6, hi:0x4f86c9 }, fog:{ c:0xc4d8e6, near:120, far:560 }, hemi:[0xe4f0ff, 0x3d4a2c, 0.85], sun:[0xfff2dc, 1.35], sea:0x2e6f8e,
+    base(x, z){                                   // 완만한 초록 구릉
+      return fbm(x/260, z/260, SEED+11, 3) * 14 + fbm(x/85, z/85, SEED+37, 3) * 4.5 + fbm(x/24, z/24, SEED+73, 2) * 0.8 - 8 - EDGE(x, z);
+    },
+    ground(x, z, h){
+      const G1 = [0.36, 0.55, 0.26], G2 = [0.44, 0.62, 0.30], G3 = [0.30, 0.47, 0.22], SAND = [0.70, 0.66, 0.46];
+      if (h < -5.5) return SAND;
+      const r = rh((x*3)|0, (z*3)|0, SEED+5);
+      return r > 0.66 ? G2 : r < 0.2 ? G3 : G1;
+    },
+  },
+};
+let MAP = null, MAP_ID = null;
+// 높이 격자 — 맵 지형 함수 + 도로 평탄화 · 개울 · 건물 터 고르기를 2m 격자에 미리 구워 두고 보간한다 (매 호출 가벼움)
+const GS = 2, GNN = HALF * 2 / GS + 1;
+let HG = null;
 function heightAt(x, z){
-  const e = Math.max(Math.abs(x), Math.abs(z)) / HALF;
-  const edge = e > 0.86 ? (e - 0.86) / 0.14 : 0;          // 가장자리는 바다로 떨어진다
-  let h = fbm(x/230, z/230, SEED+11, 3) * 22
-        + fbm(x/70,  z/70,  SEED+37, 3) * 7
-        + fbm(x/22,  z/22,  SEED+73, 2) * 1.6 - 14;
-  return h - edge * edge * 34;
+  if (!HG) return 0;
+  let fx = (x + HALF) / GS, fz = (z + HALF) / GS;
+  fx = fx < 0 ? 0 : fx > GNN - 1.001 ? GNN - 1.001 : fx; fz = fz < 0 ? 0 : fz > GNN - 1.001 ? GNN - 1.001 : fz;
+  const i = fx | 0, j = fz | 0, u = fx - i, v = fz - j, o = j * GNN + i;
+  return (HG[o] * (1 - u) + HG[o + 1] * u) * (1 - v) + (HG[o + GNN] * (1 - u) + HG[o + GNN + 1] * u) * v;
+}
+function buildHeightGrid(){
+  HG = new Float32Array(GNN * GNN);
+  for (let j = 0; j < GNN; j++) for (let i = 0; i < GNN; i++) HG[j * GNN + i] = MAP.base(i * GS - HALF, j * GS - HALF);
+}
+// 격자 고치기 — (x,z) 둘레 r 안 칸마다 f(현재 높이, 칸 x, 칸 z) 로 바꾼다
+function editGrid(x0, z0, x1, z1, f){
+  const i0 = Math.max(0, Math.floor((x0 + HALF) / GS)), i1 = Math.min(GNN - 1, Math.ceil((x1 + HALF) / GS));
+  const j0 = Math.max(0, Math.floor((z0 + HALF) / GS)), j1 = Math.min(GNN - 1, Math.ceil((z1 + HALF) / GS));
+  for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++){ const o = j * GNN + i; HG[o] = f(HG[o], i * GS - HALF, j * GS - HALF); }
+}
+// 건물 터 — 사각형 안은 h 로, 둘레 m 안은 부드럽게
+function padFlatten(cx, cz, hw, hd, h, m){
+  editGrid(cx - hw - m, cz - hd - m, cx + hw + m, cz + hd + m, (v, x, z) => {
+    const dx = Math.max(0, Math.abs(x - cx) - hw), dz = Math.max(0, Math.abs(z - cz) - hd), d = Math.hypot(dx, dz);
+    const t = d <= 0 ? 1 : d >= m ? 0 : sm(1 - d / m);
+    return v + (h - v) * t;
+  });
 }
 
 // ══ 장면 ══════════════════════════════════════════════════════
@@ -126,12 +178,13 @@ const scene = new THREE.Scene();
 const SKY_LO = new THREE.Color(0xc98b4a), SKY_HI = new THREE.Color(0x1d2b42);
 scene.fog = new THREE.Fog(0xa8794a, 90, 470);
 scene.background = SKY_HI.clone();
+let skyMesh = null, hemi = null;
 
 const cam = new THREE.PerspectiveCamera(74, 1, 0.1, 1400);
 const yawO = new THREE.Object3D(), pitO = new THREE.Object3D();
 yawO.add(pitO); pitO.add(cam); scene.add(yawO);
 
-scene.add(new THREE.HemisphereLight(0xcfd8e8, 0x3a3326, 0.75));
+hemi = new THREE.HemisphereLight(0xcfd8e8, 0x3a3326, 0.75); scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xffd0a0, 1.25);
 sun.position.set(-180, 150, 120);
 scene.add(sun);
@@ -148,47 +201,90 @@ scene.add(sun.target);   // 타깃도 씬에 넣어야 방향이 먹는다
     col.push(c.r, c.g, c.b);
   }
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-  scene.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors:true, side:THREE.BackSide, fog:false })));
+  skyMesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors:true, side:THREE.BackSide, fog:false }));
+  scene.add(skyMesh);
+}
+function applyMapLook(){                         // 맵의 하늘 · 안개 · 조명
+  SKY_LO.setHex(MAP.sky.lo); SKY_HI.setHex(MAP.sky.hi);
+  const p = skyMesh.geometry.attributes.position, c = new THREE.Color(), col = [];
+  for (let i = 0; i < p.count; i++){ const t = Math.max(0, Math.min(1, (p.getY(i)/1100) * 1.6 + 0.3)); c.copy(SKY_LO).lerp(SKY_HI, t); col.push(c.r, c.g, c.b); }
+  skyMesh.geometry.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  scene.fog.color.setHex(MAP.fog.c); scene.fog.near = MAP.fog.near; scene.fog.far = MAP.fog.far; scene.background.setHex(MAP.sky.hi);
+  hemi.color.setHex(MAP.hemi[0]); hemi.groundColor.setHex(MAP.hemi[1]); hemi.intensity = MAP.hemi[2];
+  sun.color.setHex(MAP.sun[0]); sun.intensity = MAP.sun[1];
 }
 
 // ══ 지형 ══════════════════════════════════════════════════════
-const GN = 150;
+const GN = 250;                                    // 4m 간격 — 도로·건물 터가 보이게
 let terrain = null;
 function buildTerrain(){
   const g = new THREE.PlaneGeometry(HALF*2, HALF*2, GN, GN);
   g.rotateX(-Math.PI/2);
   const p = g.attributes.position, col = [];
-  const GR=[0.30,0.42,0.22], DRY=[0.46,0.44,0.26], RK=[0.40,0.40,0.38], SD=[0.62,0.56,0.38];
   for (let i=0;i<p.count;i++){
-    const x = p.getX(i), z = p.getZ(i);
-    const h = heightAt(x, z);
+    const x = p.getX(i), z = p.getZ(i), h = heightAt(x, z);
     p.setY(i, h);
-    const d = Math.max(Math.abs(x), Math.abs(z));
-    let c = h < -6 ? SD : (h > 9 ? RK : (rh((x*3)|0,(z*3)|0,SEED+5) > 0.62 ? DRY : GR));
-    if (d > HALF*0.9) c = SD;
-    const j = (rh((x*2)|0,(z*2)|0,SEED+9) - 0.5) * 0.07;
+    const c = Math.max(Math.abs(x), Math.abs(z)) > HALF*0.9 ? MAP.ground(x, z, -9) : MAP.ground(x, z, h);
+    const j = (rh((x*2)|0,(z*2)|0,SEED+9) - 0.5) * 0.06;
     col.push(c[0]+j, c[1]+j, c[2]+j);
   }
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   g.computeVertexNormals();
   terrain = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors:true, roughness:1, flatShading:true }));
   scene.add(terrain);
-  // 바다
   const sea = new THREE.Mesh(new THREE.PlaneGeometry(2400, 2400),
-    new THREE.MeshStandardMaterial({ color:0x2b4a5e, roughness:0.35, transparent:true, opacity:0.92 }));
+    new THREE.MeshStandardMaterial({ color:MAP.sea, roughness:0.35, transparent:true, opacity:0.92 }));
   sea.rotation.x = -Math.PI/2; sea.position.y = -9;
   scene.add(sea);
 }
 
-// ══ 콜라이더 (축 정렬 상자) ═══════════════════════════════════
+// ══ 콜라이더 (축 정렬 상자) + 공간 격자 (lastdrop-07) ══════════
+// 상자가 저택·마을로 수천 개라 16m 칸에 나눠 둔다. blocked·floorAt 은 둘레 칸만, rayWorld 는 광선이 지나는 칸만 본다.
 const cols = [];
-const addCol = (x, y0, z, hw, h, hd) => cols.push({ x, z, hw, hd, y0, y1:y0+h });
-function blocked(x, y, z, r){
-  for (const c of cols){
-    if (y + 1.7 < c.y0 || y >= c.y1 - 0.05) continue;   // 윗면에 선 사람은 막지 않는다 (지붕 위)
-    if (x > c.x - c.hw - r && x < c.x + c.hw + r && z > c.z - c.hd - r && z < c.z + c.hd + r) return c;
+const CELL = 16, COFF = 64;                       // 칸 번호를 양수로
+const colGrid = new Map();
+let colStamp = 1;
+const cellKey = (i, j) => i * 1024 + j;
+function addCol(x, y0, z, hw, h, hd){
+  const c = { x, z, hw, hd, y0, y1:y0+h, s:0, off:false };
+  cols.push(c);
+  const i0 = Math.floor((x - hw) / CELL) + COFF, i1 = Math.floor((x + hw) / CELL) + COFF;
+  const j0 = Math.floor((z - hd) / CELL) + COFF, j1 = Math.floor((z + hd) / CELL) + COFF;
+  for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++){
+    const k = cellKey(i, j); let a = colGrid.get(k); if (!a) colGrid.set(k, a = []); a.push(c);
+  }
+  return c;
+}
+function eachColNear(x, z, r, fn){                // (x,z) 둘레 r 안 칸의 상자마다 fn(c) — true 를 돌려주면 멈춘다
+  const st = ++colStamp;
+  const i0 = Math.floor((x - r) / CELL) + COFF, i1 = Math.floor((x + r) / CELL) + COFF;
+  const j0 = Math.floor((z - r) / CELL) + COFF, j1 = Math.floor((z + r) / CELL) + COFF;
+  for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++){
+    const a = colGrid.get(cellKey(i, j)); if (!a) continue;
+    for (const c of a){ if (c.s === st || c.off) continue; c.s = st; if (fn(c)) return c; }
   }
   return null;
+}
+function blocked(x, y, z, r){
+  return eachColNear(x, z, r, (c) => {
+    if (y + 1.7 < c.y0 || y >= c.y1 - 0.05) return false;   // 윗면에 선 사람은 막지 않는다 (지붕 위·층 바닥)
+    return x > c.x - c.hw - r && x < c.x + c.hw + r && z > c.z - c.hd - r && z < c.z + c.hd + r;
+  });
+}
+// 서 있을 바닥 — 지면과, 발밑 상자 윗면 중 fromY+0.6 이하에서 가장 높은 것 (층 바닥·계단·지붕)
+function floorAt(x, z, fromY){
+  let f = heightAt(x, z);
+  eachColNear(x, z, 0, (c) => {
+    if (x > c.x - c.hw && x < c.x + c.hw && z > c.z - c.hd && z < c.z + c.hd && c.y1 <= fromY + 0.6 && c.y1 > f) f = c.y1;
+    return false;
+  });
+  return f;
+}
+// 그 자리 맨 위 표면 (지붕 위면 지붕) — 레드존 폭발 위치
+function surfaceAt(x, z){
+  let f = heightAt(x, z);
+  eachColNear(x, z, 0, (c) => { if (x > c.x - c.hw && x < c.x + c.hw && z > c.z - c.hd && z < c.z + c.hd && c.y1 > f) f = c.y1; return false; });
+  return f;
 }
 
 // ══ 건물 · 나무 · 바위 ════════════════════════════════════════
@@ -224,14 +320,341 @@ function merge(list){
   return out;
 }
 const SOLID = new THREE.MeshStandardMaterial({ vertexColors:true, roughness:0.95, flatShading:true });
-const houses = [];
-function buildProps(){
-  const ps = [], m = new THREE.Matrix4(), q = new THREE.Quaternion(), s3 = new THREE.Vector3();
-  const put = (g, x,y,z, sx,sy,sz, c) => {
-    m.compose(new THREE.Vector3(x,y,z), q, s3.set(sx,sy,sz));
-    ps.push({ g, m: m.clone(), c });
-  };
-  // ── 건물 22채 (좌표 해시로 고정) ──
+const SPH = new THREE.SphereGeometry(1, 6, 4);
+// ══ 건물 생성기 (lastdrop-07) ═════════════════════════════════
+// 두 맵이 같이 쓴다. 층 높이 3.4m, 층마다 바닥 콜라이더. 계단은 뒤-왼쪽 구석의 ㄷ자 꺾음 계단 (한 단 0.283m, 플레이어는 걸어서 오른다).
+// 바깥 벽은 문·창 구멍을 뚫은 상자 조각 (구멍은 진짜 빈자리라 밖에서 보이고 쏠 수 있다). 저택은 층마다 방 3개(홀 + 앞방 + 뒷방)와 옥상.
+// 건물마다 길찾기 그래프: 밖 → 문 → 방 → 계단 아래 → 참 → 계단 위 → 위층 방 … → 옥상. 봇은 이 그래프의 최단 경로로 다닌다.
+const houses = [];                               // 이름은 예전 그대로 — 집·저택 모두. x,z,w,d 는 바깥 벽 기준
+const FLOOR_H = 3.4, SLAB = 0.25, WALL_T = 0.4, RISE = FLOOR_H / 12, STEP_RUN = 0.3;
+const STAIR = { land:1.2, lane:1.4, run:1.8 };   // 참 1.2m · 한 줄 폭 1.4m · 반 층 6단 1.8m
+let PS = null;                                   // 이번 맵의 합칠 상자들
+const _pm = new THREE.Matrix4(), _pq = new THREE.Quaternion(), _ps = new THREE.Vector3(), _pv = new THREE.Vector3(), _pe = new THREE.Euler();
+function put(g, x, y, z, sx, sy, sz, c, ry){
+  _pq.setFromEuler(_pe.set(0, ry || 0, 0));
+  _pm.compose(_pv.set(x, y, z), _pq, _ps.set(sx, sy, sz));
+  PS.push({ g, m:_pm.clone(), c });
+}
+// 보이는 상자 + 콜라이더 (모서리 좌표로)
+function solid(x0, x1, y0, y1, z0, z1, c, noCol){
+  if (x1 - x0 < 0.01 || y1 - y0 < 0.01 || z1 - z0 < 0.01) return null;
+  put(BOX, (x0+x1)/2, (y0+y1)/2, (z0+z1)/2, x1-x0, y1-y0, z1-z0, c);
+  return noCol ? null : addCol((x0+x1)/2, y0, (z0+z1)/2, (x1-x0)/2, y1-y0, (z1-z0)/2);
+}
+// 구멍 뚫린 벽. ax='x' 면 u=x 방향으로 u0..u1, v=z 에 두께 t. ops = [{a,b,y0,y1}] (u 구간 · 높이 구간)
+function wall(ax, u0, u1, v, t, y0, y1, ops, c){
+  const br = [u0, u1];
+  for (const o of ops){ if (o.a > u0 && o.a < u1) br.push(o.a); if (o.b > u0 && o.b < u1) br.push(o.b); }
+  br.sort((p, q) => p - q);
+  const piece = (a, b, ya, yb) => ax === 'x' ? solid(a, b, ya, yb, v - t/2, v + t/2, c) : solid(v - t/2, v + t/2, ya, yb, a, b, c);
+  let run0 = null;                               // 구멍 없는 칸은 이어 붙여 상자 수를 줄인다
+  for (let i = 0; i + 1 < br.length; i++){
+    const a = br[i], b = br[i+1]; if (b - a < 0.01) continue;
+    const m = (a + b) / 2, hs = ops.filter(o => o.a <= m && o.b >= m).sort((p, q) => p.y0 - q.y0);
+    if (!hs.length){ if (run0 === null) run0 = a; continue; }
+    if (run0 !== null){ piece(run0, a, y0, y1); run0 = null; }
+    let y = y0;
+    for (const o of hs){ if (o.y0 > y) piece(a, b, y, o.y0); y = Math.max(y, o.y1); }
+    if (y < y1) piece(a, b, y, y1);
+  }
+  if (run0 !== null) piece(run0, u1, y0, y1);
+}
+// 창 자리 — 벽 길이 u0..u1 에 3.6m 간격, 구석·skip 구간은 뺀다
+function winSlots(u0, u1, skip){
+  const out = [], n = Math.floor((u1 - u0 - 2.4) / 3.6);
+  for (let i = 0; i < n; i++){
+    const u = u0 + (u1 - u0) * (i + 0.5) / n;
+    if (skip.some(([a, b]) => u + 0.6 > a && u - 0.6 < b)) continue;
+    out.push(u);
+  }
+  return out;
+}
+// o = { x, z, w, d, nf(층 수), g(터 높이), roofUp(옥상 출입), rooms(방 나누기), wall, trim, roofC, floorC, roofStyle:'flat'|'tile', parapet }
+function makeBuilding(o){
+  const { x, z, w, d, nf, g } = o, hw = w/2, hd = d/2;
+  const F = (k) => g + 0.15 + k * FLOOR_H;
+  const ix0 = x - hw + WALL_T/2, ix1 = x + hw - WALL_T/2, iz0 = z - hd + WALL_T/2, iz1 = z + hd - WALL_T/2;   // 벽 안쪽 면
+  const flights = nf - 1 + (o.roofUp ? 1 : 0);
+  const sx = ix0, sz = iz0;                      // 계단 구석 (뒤-왼쪽)
+  const SW = STAIR.land + STAIR.run;             // 계단 구멍 길이 3.0m (참 + 반 층)
+  const HZ = sz + STAIR.lane*2 + 0.5;            // 계단 구멍 앞 끝 — 줄 A 바깥으로 0.5m 더 비운다 (오르는 몸이 위층 바닥 모서리에 머리를 안 박게)
+  const zA = sz + STAIR.lane * 1.5, zB = sz + STAIR.lane * 0.5;   // 올라가는 줄 A(앞) · 내려오는 줄 B(뒤) 가운데
+  const top = F(nf), par = o.parapet || 0;
+  const bld = { x, z, w, d, base:g, H:top - g, nf, g, F, roofUp:!!o.roofUp, flights, nodes:[], rooms:[], stair:flights ? { x0:sx, x1:sx + SW, z0:sz, z1:HZ } : null,
+                ix0, ix1, iz0, iz1, top, mansion:!!o.rooms };
+  const N = (px, py, pz, kind, fl) => { bld.nodes.push({ x:px, y:py, z:pz, kind, fl, e:[] }); return bld.nodes.length - 1; };
+  const E = (a, b) => { bld.nodes[a].e.push(b); bld.nodes[b].e.push(a); };
+  // ── 바닥 · 층 슬래브 (계단이 올라오는 층은 계단 구멍을 비운다) ──
+  solid(ix0, ix1, g - 0.35, F(0), iz0, iz1, o.floorC);
+  for (let k = 1; k <= nf; k++){
+    const y0 = F(k) - SLAB, y1 = F(k), c = k === nf ? o.roofC : o.floorC;
+    if (k <= flights){
+      solid(sx + SW, ix1, y0, y1, iz0, iz1, c);
+      solid(ix0, sx + SW, y0, y1, HZ, iz1, c);
+      if (k < flights){                          // 중간 층 — 다음 계단 옆 0.5m 빈 띠에 난간 (맨 위 층은 아래 계단 난간이 막는다)
+        solid(ix0, sx + SW, y1, y1 + 1.0, HZ - 0.05, HZ + 0.05, o.trim);
+        solid(sx + SW - 0.05, sx + SW + 0.05, y1, y1 + 1.0, sz + STAIR.lane*2, HZ, o.trim);
+      }
+    } else solid(ix0, ix1, y0, y1, iz0, iz1, c);
+  }
+  // ── 바깥 벽 (문 · 창 구멍) ──
+  const doorX = o.rooms ? sx + 2.4 : x;
+  const wy0 = g - 0.6, wy1 = top + par;
+  const opsF = [{ a:doorX - 1.0, b:doorX + 1.0, y0:wy0, y1:F(0) + 2.3 }], opsB = [], opsL = [], opsR = [];
+  const xw = sx + 5.0, zs = z;                   // 저택 안벽 (홀 | 오른쪽, 앞방 | 뒷방)
+  for (let k = 0; k < nf; k++){
+    const wy = { y0:F(k) + 1.0, y1:F(k) + 2.2 };
+    const skFB = o.rooms ? [[xw - 0.8, xw + 0.8]] : [];
+    for (const u of winSlots(x - hw, x + hw, k === 0 ? [[doorX - 1.6, doorX + 1.6], ...skFB] : skFB)) opsF.push({ a:u - 0.6, b:u + 0.6, ...wy });
+    for (const u of winSlots(x - hw, x + hw, [[x - hw, sx + SW + 1.4], ...skFB])) opsB.push({ a:u - 0.6, b:u + 0.6, ...wy });
+    for (const u of winSlots(z - hd, z + hd, [[z - hd, HZ + 0.4]])) opsL.push({ a:u - 0.6, b:u + 0.6, ...wy });
+    for (const u of winSlots(z - hd, z + hd, o.rooms ? [[zs - 0.8, zs + 0.8]] : [])) opsR.push({ a:u - 0.6, b:u + 0.6, ...wy });
+  }
+  wall('x', x - hw, x + hw, z + hd - WALL_T/2, WALL_T, wy0, wy1, opsF, o.wall);
+  wall('x', x - hw, x + hw, z - hd + WALL_T/2, WALL_T, wy0, wy1, opsB, o.wall);
+  wall('z', iz0, iz1, x - hw + WALL_T/2, WALL_T, wy0, wy1, opsL, o.wall);
+  wall('z', iz0, iz1, x + hw - WALL_T/2, WALL_T, wy0, wy1, opsR, o.wall);
+  // 창틀·처마 띠 (보이기만)
+  for (let k = 1; k <= nf; k++) put(BOX, x, F(k) - 0.12, z, w + 0.16, 0.18, d + 0.16, o.trim);
+  // ── 계단 (층마다 한 벌: 줄 A 6단 → 참 → 줄 B 6단) ──
+  for (let k = 0; k < flights; k++){
+    const fb = F(k), last = k === flights - 1;
+    for (let i = 0; i < 6; i++){                 // 줄 A: x 가 줄어드는 쪽으로 오른다
+      const t = fb + RISE * (i + 1), xa = sx + SW - STEP_RUN * (i + 1);
+      solid(xa, xa + STEP_RUN, Math.max(fb - 0.05, t - 0.32), t, sz + STAIR.lane, sz + STAIR.lane*2, o.stairC);
+    }
+    solid(sx, sx + STAIR.land, fb + 1.7 - 0.3, fb + 1.7, sz, sz + STAIR.lane*2, o.stairC);   // 참
+    for (let i = 0; i < 6; i++){                 // 줄 B: x 가 느는 쪽으로 오른다 — 마지막 단 = 위층 바닥
+      const t = fb + 1.7 + RISE * (i + 1), xb = sx + STAIR.land + STEP_RUN * i;
+      solid(xb, xb + STEP_RUN, t - 0.32, t, sz, sz + STAIR.lane, o.stairC);
+    }
+    solid(sx + STAIR.land, sx + SW, fb, fb + FLOOR_H + (last ? 1.0 : 0), sz + STAIR.lane - 0.05, sz + STAIR.lane + 0.05, o.trim);   // 두 줄 사이 칸막이
+    if (last){                                   // 맨 위 — 줄 A 쪽 빈 구멍에 난간
+      const L = fb + FLOOR_H;
+      solid(sx + SW - 0.05, sx + SW + 0.05, L, L + 1.0, sz + STAIR.lane, HZ, o.trim);
+      solid(ix0, sx + SW, L, L + 1.0, HZ - 0.05, HZ + 0.05, o.trim);
+    }
+  }
+  // ── 저택 안벽 (층마다 문 구멍 1.2m) ──
+  if (o.rooms){
+    const zF = (zs + iz1) / 2, zBk = (iz0 + zs) / 2, xg = (xw + ix1) / 2;
+    const opsW = [], opsZ = [];
+    for (let k = 0; k < nf; k++){
+      opsW.push({ a:zF - 0.6, b:zF + 0.6, y0:F(k) - 0.1, y1:F(k) + 2.3 }, { a:zBk - 0.6, b:zBk + 0.6, y0:F(k) - 0.1, y1:F(k) + 2.3 });
+      opsZ.push({ a:xg - 0.6, b:xg + 0.6, y0:F(k) - 0.1, y1:F(k) + 2.3 });
+    }
+    wall('z', iz0, iz1, xw, 0.2, F(0), top - SLAB, opsW, o.trim);
+    wall('x', xw + 0.1, ix1, zs, 0.2, F(0), top - SLAB, opsZ, o.trim);
+  }
+  // ── 지붕 ──
+  if (o.roofStyle === 'tile'){                   // 기와 — 계단식 박공 (위에 설 수 있다)
+    solid(x - hw - 0.5, x + hw + 0.5, top, top + 0.3, z - hd - 0.5, z + hd + 0.5, o.roofC);
+    solid(x - hw - 0.2, x + hw + 0.2, top + 0.3, top + 0.85, z - hd * 0.62, z + hd * 0.62, o.roofC);
+    solid(x - hw + 0.1, x + hw - 0.1, top + 0.85, top + 1.35, z - hd * 0.26, z + hd * 0.26, o.roofC);
+  } else {                                       // 평지붕 — 난간 윗단 테두리 (보이기만)
+    const yy = top + par + 0.06;
+    put(BOX, x, yy, z - hd + 0.2, w + 0.1, 0.12, 0.5, o.trim); put(BOX, x, yy, z + hd - 0.2, w + 0.1, 0.12, 0.5, o.trim);
+    put(BOX, x - hw + 0.2, yy, z, 0.5, 0.12, d + 0.1, o.trim); put(BOX, x + hw - 0.2, yy, z, 0.5, 0.12, d + 0.1, o.trim);
+  }
+  // ── 길찾기 그래프 ──
+  const out = N(doorX, g, z + hd + 2, 'out', 0), door = N(doorX, F(0), z + hd - 0.2, 'door', 0);
+  E(out, door);
+  bld.out = out;
+  const room = [];                               // room[k] = [{n, x0,x1,z0,z1}]
+  for (let k = 0; k <= (o.roofUp ? nf : nf - 1); k++){
+    const y = F(k), rs = [];
+    if (k === nf){                               // 옥상
+      rs.push({ n:N(sx + SW + 2.5, y, z + 1, 'roof', k), x0:ix0, x1:ix1, z0:iz0, z1:iz1 });
+    } else if (o.rooms){
+      const hall = N(sx + 3.6, y, (HZ + iz1) / 2, 'room', k);
+      const zF = (zs + iz1) / 2, zBk = (iz0 + zs) / 2, xg = (xw + ix1) / 2;
+      const rf = N(xg, y, zF, 'room', k), rb = N(xg, y, zBk, 'room', k);
+      const gF = N(xw, y, zF, 'gap', k), gB = N(xw, y, zBk, 'gap', k), gM = N(xg, y, zs, 'gap', k);
+      E(hall, gF); E(gF, rf); E(hall, gB); E(gB, rb); E(rf, gM); E(gM, rb);
+      rs.push({ n:hall, x0:ix0, x1:xw - 0.1, z0:iz0, z1:iz1 }, { n:rf, x0:xw + 0.1, x1:ix1, z0:zs + 0.1, z1:iz1 }, { n:rb, x0:xw + 0.1, x1:ix1, z0:iz0, z1:zs - 0.1 });
+    } else rs.push({ n:N(Math.max(x, sx + 3.8), y, z + (flights ? 0.6 : 0), 'room', k), x0:ix0, x1:ix1, z0:iz0, z1:iz1 });
+    room.push(rs);
+  }
+  E(door, room[0][0].n);
+  for (let k = 0; k < flights; k++){
+    const fb = F(k);
+    const aBot = N(sx + 3.6, fb, zA, 'stair', k), mA = N(sx + 0.6, fb + 1.7, zA, 'stair', k + 0.5),
+          mB = N(sx + 0.6, fb + 1.7, zB, 'stair', k + 0.5), bTop = N(sx + 3.6, fb + FLOOR_H, zB, 'stair', k + 1);
+    E(aBot, mA); E(mA, mB); E(mB, bTop);
+    E(aBot, room[k][0].n); E(bTop, room[k + 1][0].n);
+    bld.nodes[aBot].up = true;
+  }
+  for (let k = 1; k < flights; k++){             // 위층에 올라와 바로 다음 계단으로 (같은 층의 B 위 ↔ A 아래)
+    const bTop = bld.nodes.findIndex(n => n.kind === 'stair' && n.fl === k && !n.up), aBot = bld.nodes.findIndex(n => n.kind === 'stair' && n.fl === k && n.up);
+    if (bTop >= 0 && aBot >= 0) E(bTop, aBot);
+  }
+  bld.rooms = room;
+  houses.push(bld);
+  return bld;
+}
+// 다익스트라 — 노드 수가 적다 (저택 40개 안팎)
+function graphPath(h, a, b){
+  const n = h.nodes.length, dist = new Float64Array(n).fill(1e9), prev = new Int32Array(n).fill(-1), done = new Uint8Array(n);
+  dist[a] = 0;
+  for (;;){
+    let u = -1, bd = 1e9;
+    for (let i = 0; i < n; i++) if (!done[i] && dist[i] < bd){ bd = dist[i]; u = i; }
+    if (u < 0 || u === b) break;
+    done[u] = 1;
+    const p = h.nodes[u];
+    for (const v of p.e){
+      const q = h.nodes[v], c = bd + Math.hypot(q.x - p.x, (q.y - p.y) * 1.5, q.z - p.z);
+      if (c < dist[v]){ dist[v] = c; prev[v] = u; }
+    }
+  }
+  const out = [];
+  for (let u = b; u >= 0; u = prev[u]){ const p = h.nodes[u]; out.unshift({ x:p.x, y:p.y, z:p.z, tight:p.kind === 'stair' }); if (u === a) break; }
+  return out;
+}
+// (x,y,z) 가 어느 건물·어느 노드 자리인가 (null = 밖, 또는 계단 없는 지붕 위)
+function locate(x, y, z){
+  for (const h of houses){
+    if (x < h.x - h.w/2 || x > h.x + h.w/2 || z < h.z - h.d/2 || z > h.z + h.d/2) continue;
+    if (y < h.g - 1.5) return null;
+    if (y > h.top - 0.6 && !h.roofUp) return null;
+    const s = h.stair;
+    if (s && x > s.x0 && x < s.x1 && z > s.z0 && z < s.z1 && y < h.top + 0.3){   // 계단 위 — 가장 가까운 계단 노드
+      let bn = -1, bd = 1e9;
+      h.nodes.forEach((p, i) => { if (p.kind !== 'stair') return; const dd = Math.hypot(p.x - x, (p.y - y) * 2, p.z - z); if (dd < bd){ bd = dd; bn = i; } });
+      return { h, n:bn };
+    }
+    const k = Math.max(0, Math.min(h.rooms.length - 1, Math.round((y - h.F(0)) / FLOOR_H)));
+    for (const r of h.rooms[k]) if (x >= r.x0 - 0.3 && x <= r.x1 + 0.3 && z >= r.z0 - 0.3 && z <= r.z1 + 0.3) return { h, n:r.n };
+    return { h, n:h.rooms[k][0].n };
+  }
+  return null;
+}
+
+// ══ 맵 배치 ══════════════════════════════════════════════════
+const ROADS = [];                                // { ax,az,bx,bz, w, paved }
+const STREAMS = [];                              // [[x,z], …] 물길
+function segDist(px, pz, s){                     // 점 → 선분 거리와 t
+  const dx = s.bx - s.ax, dz = s.bz - s.az, L2 = dx*dx + dz*dz || 1;
+  const t = Math.max(0, Math.min(1, ((px - s.ax)*dx + (pz - s.az)*dz) / L2));
+  return { d:Math.hypot(px - s.ax - dx*t, pz - s.az - dz*t), t };
+}
+const roadNear = (x, z, m) => ROADS.some(s => segDist(x, z, s).d < s.w/2 + m);
+const rectRoad = (x, z, hw, hd, m) => ROADS.some(s => {          // 사각형이 도로에 닿나 (꼭짓점·가운데·변 가운데 표본)
+  for (const [px, pz] of [[x, z], [x-hw, z-hd], [x+hw, z-hd], [x-hw, z+hd], [x+hw, z+hd], [x, z-hd], [x, z+hd], [x-hw, z], [x+hw, z]])
+    if (segDist(px, pz, s).d < s.w/2 + m) return true;
+  return false;
+});
+const rectFree = (x, z, hw, hd, m) => houses.every(h => Math.abs(x - h.x) > hw + h.w/2 + m || Math.abs(z - h.z) > hd + h.d/2 + m);
+// 도로 아래 땅을 고른다 — 길 따라 높이를 매끈하게 하고 양옆은 비탈로 잇는다
+function flattenRoad(s){
+  const L = Math.hypot(s.bx - s.ax, s.bz - s.az), n = Math.max(2, Math.ceil(L / 6)), prof = [];
+  for (let i = 0; i <= n; i++){ const t = i / n; prof.push(heightAt(s.ax + (s.bx - s.ax)*t, s.az + (s.bz - s.az)*t)); }
+  const sp = prof.map((_, i) => { let a = 0, c = 0; for (let j = -4; j <= 4; j++){ const q = prof[Math.max(0, Math.min(n, i + j))]; a += q; c++; } return a / c; });
+  const ph = (t) => { const f = t * n, i = Math.min(n - 1, f | 0), u = f - i; return sp[i] * (1 - u) + sp[i + 1] * u; };
+  const m = s.w/2 + 7;
+  editGrid(Math.min(s.ax, s.bx) - m, Math.min(s.az, s.bz) - m, Math.max(s.ax, s.bx) + m, Math.max(s.az, s.bz) + m, (v, x, z) => {
+    const r = segDist(x, z, s); if (r.d > m) return v;
+    const tgt = Math.max(ph(r.t), -1.2), k = r.d < s.w/2 + 1 ? 1 : sm(1 - (r.d - s.w/2 - 1) / 6);
+    return v + (tgt - v) * k;
+  });
+}
+// 도로 띠 — 땅을 따라 4m 마디, 6cm 위
+function roadMesh(){
+  const pos = [], col = [], idx = [], c = new THREE.Color();
+  for (const s of ROADS){
+    const L = Math.hypot(s.bx - s.ax, s.bz - s.az), n = Math.max(1, Math.ceil(L / 4)), ux = (s.bx - s.ax)/L, uz = (s.bz - s.az)/L, px = -uz * s.w/2, pz = ux * s.w/2;
+    c.set(s.paved ? 0x55585c : 0x8a6f4a);
+    const b0 = pos.length / 3;
+    for (let i = 0; i <= n; i++){
+      const t = i / n, cx = s.ax + (s.bx - s.ax)*t, cz = s.az + (s.bz - s.az)*t;
+      for (const sg of [-1, 1]){ const x = cx + px*sg, z = cz + pz*sg; pos.push(x, heightAt(x, z) + 0.07 + (s.paved ? 0.01 : 0), z); col.push(c.r, c.g, c.b); }
+      if (i < n){ const a = b0 + i*2; idx.push(a, a+2, a+1, a+1, a+2, a+3); }
+    }
+    if (s.paved) for (let t = 4; t < L - 2; t += 9){       // 가운데 점선
+      const x = s.ax + ux*t, z = s.az + uz*t;
+      put(BOX, x, heightAt(x, z) + 0.1, z, 0.18, 0.02, 3.2, 0xd8d2b0, Math.atan2(ux, uz));
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(idx); g.computeVertexNormals();
+  scene.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors:true, roughness:1, side:THREE.DoubleSide, polygonOffset:true, polygonOffsetFactor:-2 })));
+}
+function streamMesh(){
+  const pos = [], idx = [];
+  for (const st of STREAMS){
+    for (let i = 0; i + 1 < st.length; i++){
+      const [ax, az] = st[i], [bx, bz] = st[i+1], L = Math.hypot(bx - ax, bz - az) || 1, px = -(bz - az)/L * 3.4, pz = (bx - ax)/L * 3.4;
+      const mx = (ax + bx)/2, mz = (az + bz)/2;
+      if (roadNear(mx, mz, 1)) continue;           // 길이 지나는 여울목은 물을 안 깐다
+      const y = Math.max(heightAt(ax, az), heightAt(bx, bz), heightAt(mx, mz)) + 0.42, b0 = pos.length / 3;
+      pos.push(ax - px, y, az - pz, ax + px, y, az + pz, bx - px, y, bz - pz, bx + px, y, bz + pz);
+      idx.push(b0, b0+2, b0+1, b0+1, b0+2, b0+3);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
+  scene.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color:0x4f8fb0, roughness:0.25, transparent:true, opacity:0.78, side:THREE.DoubleSide })));
+}
+function carveStream(st){
+  for (let i = 0; i + 1 < st.length; i++){
+    const s = { ax:st[i][0], az:st[i][1], bx:st[i+1][0], bz:st[i+1][1] };
+    editGrid(Math.min(s.ax, s.bx) - 9, Math.min(s.az, s.bz) - 9, Math.max(s.ax, s.bx) + 9, Math.max(s.az, s.bz) + 9, (v, x, z) => {
+      const d = segDist(x, z, s).d; if (d > 9) return v;
+      return v - (d < 3 ? 0.7 : 0.7 * sm(1 - (d - 3) / 6));
+    });
+  }
+}
+// 터 높이 — 발자국 둘레 표본의 가운데값
+function padH(x, z, hw, hd){
+  const s = [];
+  for (const [a, b] of [[0,0],[-1,-1],[1,-1],[-1,1],[1,1],[0,-1],[0,1],[-1,0],[1,0]]) s.push(heightAt(x + a*hw, z + b*hd));
+  s.sort((p, q) => p - q);
+  return s[4];
+}
+function placeBuilding(o){
+  const g = padH(o.x, o.z, o.w/2, o.d/2);
+  if (g < SEA_Y + 0.5) return null;
+  padFlatten(o.x, o.z, o.w/2 + 1.5, o.d/2 + 3.5, g, 7);
+  return { ...o, g };
+}
+// 나무 · 바위 · 선인장 · 덤불
+function tree(x, y, z, i){                       // 침엽수
+  const th = 4.5 + rh(i,13,SEED)*4, r = 2.1 + rh(i,14,SEED);
+  put(CYL, x, y + th/2, z, 0.26, th, 0.26, 0x4a3726);
+  put(CONE, x, y + th + 1.7, z, r, 4.4, r, 0x2f4a2a);
+  addCol(x, y, z, 0.34, th, 0.34);
+}
+function leafTree(x, y, z, i){                   // 활엽수
+  const th = 3.2 + rh(i,13,SEED)*2.5, r = 2.2 + rh(i,14,SEED)*1.4, c = [0x3f6b2c, 0x4d7a32, 0x355e27][i % 3];
+  put(CYL, x, y + th/2, z, 0.28, th, 0.28, 0x5a4330);
+  put(SPH, x, y + th + r*0.55, z, r, r*0.9, r, c);
+  put(SPH, x + r*0.4, y + th + r*0.2, z - r*0.3, r*0.7, r*0.6, r*0.7, c);
+  addCol(x, y, z, 0.34, th, 0.34);
+}
+function rock(x, y, z, i, c){
+  const r = 0.9 + rh(i,15,SEED)*1.9;
+  put(BOX, x, y + r*0.42, z, r*2, r*0.9, r*1.7, c, rh(i,16,SEED)*3);
+  addCol(x, y, z, r*0.9, r*0.9, r*0.8);
+}
+function cactus(x, y, z, i){
+  const h = 2.4 + rh(i,13,SEED)*2.2, c = 0x5f7f3a;
+  put(CYL, x, y + h/2, z, 0.32, h, 0.32, c);
+  if (rh(i,17,SEED) < 0.7){ put(CYL, x + 0.55, y + h*0.55, z, 0.2, 0.3, 0.2, c, 0); put(CYL, x + 0.75, y + h*0.7, z, 0.2, h*0.4, 0.2, c); }
+  if (rh(i,18,SEED) < 0.5){ put(CYL, x - 0.55, y + h*0.45, z, 0.2, 0.3, 0.2, c); put(CYL, x - 0.75, y + h*0.58, z, 0.2, h*0.3, 0.2, c); }
+  addCol(x, y, z, 0.36, h, 0.36);
+}
+function bush(x, y, z, i, c){
+  const r = 0.6 + rh(i,19,SEED)*0.7;
+  put(SPH, x, y + r*0.35, z, r, r*0.6, r, c);
+}
+const nearHouse = (x, z, m) => houses.some(h => Math.abs(x - h.x) < h.w/2 + m && Math.abs(z - h.z) < h.d/2 + m);
+
+// ── 사막: 예전 섬 배치(고리 22채) 를 흙벽·평지붕 집으로. 2층집은 이제 계단이 있다 ──
+function buildDesert(){
+  const ADOBE = [0xc9a27a, 0xb88a5e, 0xd2b48c, 0xa97d55], TRIM = [0x8f6a45, 0x7a5a3a, 0x9c7a50, 0x6f5236];
+  const plans = [];
   let k = 0;
   const rings = [{r:0,n:1},{r:95,n:5},{r:195,n:8},{r:300,n:10},{r:410,n:10}];
   for (const ring of rings){
@@ -242,49 +665,133 @@ function buildProps(){
       k++;
       if (heightAt(x,z) < -5) continue;
       const w = 9 + Math.round(rh(k,3,SEED)*13), d = 8 + Math.round(rh(k,4,SEED)*10);
-      const fl = rh(k,5,SEED) < 0.3 ? 2 : 1;
-      const H = 3.4 * fl, base = heightAt(x,z) - 0.3;
-      const wall = [0xcac3b2, 0xb9b7ad, 0xc3b49a, 0xaeb5b4][k % 4];
-      const roof = [0x7d4f3c, 0x4f5c68, 0x5f6a48, 0x6b4f4f][k % 4];
-      put(BOX, x, base + H/2, z - d/2, w, H, 0.4, wall);     // 벽 네 장 (앞은 문을 뚫는다)
-      addCol(x, base, z - d/2, w/2, H, 0.2);
-      put(BOX, x - w/2, base + H/2, z, 0.4, H, d, wall);
-      addCol(x - w/2, base, z, 0.2, H, d/2);
-      put(BOX, x + w/2, base + H/2, z, 0.4, H, d, wall);
-      addCol(x + w/2, base, z, 0.2, H, d/2);
-      const dw = 2.4, side = (w - dw) / 2;
-      put(BOX, x - (dw/2 + side/2), base + H/2, z + d/2, side, H, 0.4, wall);
-      addCol(x - (dw/2 + side/2), base, z + d/2, side/2, H, 0.2);
-      put(BOX, x + (dw/2 + side/2), base + H/2, z + d/2, side, H, 0.4, wall);
-      addCol(x + (dw/2 + side/2), base, z + d/2, side/2, H, 0.2);
-      put(BOX, x, base + H + 0.22, z, w + 1.2, 0.45, d + 1.2, roof);      // 지붕
-      addCol(x, base + H, z, (w+1.2)/2, 0.45, (d+1.2)/2);
-      put(BOX, x, base + 0.1, z, w, 0.22, d, 0x9a9484);                   // 바닥
-      if (fl === 2) put(BOX, x, base + 3.5, z, w, 0.22, d, 0x9a9484);
-      houses.push({ x, z, w, d, base, H });
+      const nf = rh(k,5,SEED) < 0.3 ? 2 : 1;
+      if (plans.some(p => Math.abs(p.x - x) < (p.w + w)/2 + 4 && Math.abs(p.z - z) < (p.d + d)/2 + 6)) continue;
+      const p = placeBuilding({ x, z, w, d, nf, wall:ADOBE[k%4], trim:TRIM[k%4], roofC:0x9c7650, floorC:0x9a8468, stairC:0x8a7354, roofStyle:'flat', parapet:0.45 });
+      if (p) plans.push(p);
     }
   }
-  // ── 나무 90그루 · 바위 60개 ──
-  for (let i=0;i<380;i++){
+  for (const p of plans) makeBuilding(p);
+  for (let i=0;i<520;i++){                       // 선인장 · 마른 덤불 · 바위 (바위를 늘렸다)
     const a = rh(i,11,SEED)*Math.PI*2, rr = Math.sqrt(rh(i,12,SEED)) * HALF * 0.93;
-    const x = Math.cos(a)*rr, z = Math.sin(a)*rr;
-    const y = heightAt(x,z);
-    if (y < -4) continue;
-    let near = false;
-    for (const h of houses) if (Math.abs(x-h.x) < h.w/2+3 && Math.abs(z-h.z) < h.d/2+3) { near = true; break; }
-    if (near) continue;
-    if (i % 5 < 3){                                   // 나무
-      const th = 4.5 + rh(i,13,SEED)*4;
-      put(CYL, x, y + th/2, z, 0.26, th, 0.26, 0x4a3726);
-      put(CONE, x, y + th + 1.7, z, 2.1 + rh(i,14,SEED), 4.4, 2.1 + rh(i,14,SEED), 0x2f4a2a);
-      addCol(x, y, z, 0.34, th, 0.34);
-    } else {                                          // 바위
-      const rr2 = 0.9 + rh(i,15,SEED)*1.9;
-      put(BOX, x, y + rr2*0.42, z, rr2*2, rr2*0.9, rr2*1.7, 0x5b5b55);
-      addCol(x, y, z, rr2, rr2*0.9, rr2*0.85);
+    const x = Math.cos(a)*rr, z = Math.sin(a)*rr, y = heightAt(x,z);
+    if (y < -4 || nearHouse(x, z, 3)) continue;
+    const t = i % 10;
+    if (t < 3) cactus(x, y, z, i);
+    else if (t < 6) bush(x, y, z, i, [0x8a7a4a, 0x7a6a3e, 0x9a8656][i % 3]);
+    else rock(x, y, z, i, [0x8a6a4a, 0x7a5c40, 0x9a7a58][i % 3]);
+  }
+}
+// ── 초원: 마을 3~4곳 + 도로망 + 저택 3~4채 + 외딴집 + 숲 · 개울 ──
+function buildMeadow(){
+  const WALLS = [0xe8e0cc, 0xd9cfb6, 0xc9d1d3, 0xe0c9a6, 0xb9c4b0], ROOFS = [0x9a3e2c, 0x5a5f6a, 0x7a4a2a, 0x3f5a6e], TRIM = 0x6a5a48;
+  // 개울 1~2 줄기 — 섬을 가로지르며 굽이친다
+  const ns = 1 + (rh(1, 2, SEED+300) < 0.6 ? 1 : 0);
+  for (let s = 0; s < ns; s++){
+    const a = rh(s, 3, SEED+300) * 6.283, ux = Math.cos(a), uz = Math.sin(a), off = (rh(s, 4, SEED+300) - 0.5) * 300;
+    const pts = [];
+    for (let t = -430; t <= 430; t += 12){
+      const w = Math.sin(t / 70 + s * 2) * 22 + (fbm(t/90, s*7, SEED+301, 2) - 0.5) * 60;
+      pts.push([ux*t - uz*(off + w), uz*t + ux*(off + w)]);
+    }
+    STREAMS.push(pts); carveStream(pts);
+  }
+  // 마을 — 고리 위 3~4곳
+  const nv = 3 + (rh(2, 5, SEED+310) < 0.5 ? 1 : 0), vil = [], a0 = rh(3, 6, SEED+310) * 6.283;
+  for (let i = 0; i < nv; i++){
+    const a = a0 + i * 6.283 / nv + (rh(i, 7, SEED+310) - 0.5) * 0.5, r = 220 + rh(i, 8, SEED+310) * 80;
+    vil.push({ x:Math.cos(a)*r, z:Math.sin(a)*r });
+  }
+  for (let i = 0; i < nv; i++){                  // 포장 고리 도로 + 가운데로 가는 흙길
+    const p = vil[i], q = vil[(i + 1) % nv];
+    ROADS.push({ ax:p.x, az:p.z, bx:q.x, bz:q.z, w:8, paved:true });
+    ROADS.push({ ax:p.x, az:p.z, bx:0, bz:0, w:6, paved:false });
+  }
+  for (const v of vil){                          // 마을 안 골목 (가로·세로)
+    ROADS.push({ ax:v.x - 46, az:v.z, bx:v.x + 46, bz:v.z, w:6, paved:true });
+    ROADS.push({ ax:v.x, az:v.z - 40, bx:v.x, bz:v.z + 40, w:5, paved:false });
+  }
+  for (const s of ROADS) flattenRoad(s);
+  const plans = [];
+  const tryPlace = (o) => {
+    if (Math.abs(o.x) > HALF * 0.86 || Math.abs(o.z) > HALF * 0.86) return null;
+    if (rectRoad(o.x, o.z, o.w/2, o.d/2 + 2.5, 2.5)) return null;
+    if (plans.some(p => Math.abs(p.x - o.x) < (p.w + o.w)/2 + 5 && Math.abs(p.z - o.z) < (p.d + o.d)/2 + 7)) return null;
+    if (STREAMS.some(st => st.some(([sx, sz]) => Math.abs(sx - o.x) < o.w/2 + 9 && Math.abs(sz - o.z) < o.d/2 + 9))) return null;
+    const p = placeBuilding(o); if (p) plans.push(p); return p;
+  };
+  // 저택 3~4채 — 큰 길가 (고리 도로 가운데쯤, 길에서 비켜서)
+  const nm = 3 + (rh(4, 9, SEED+320) < 0.5 ? 1 : 0);
+  for (let i = 0, got = 0; i < nv * 6 && got < nm; i++){
+    const s = ROADS[(i % nv) * 2], t = 0.35 + rh(i, 10, SEED+320) * 0.3, L = Math.hypot(s.bx - s.ax, s.bz - s.az);
+    const nx = -(s.bz - s.az)/L, nz = (s.bx - s.ax)/L, side = rh(i, 11, SEED+320) < 0.5 ? 1 : -1, off = 22 + rh(i, 12, SEED+320) * 10;
+    const w = 20 + Math.round(rh(i, 13, SEED+320) * 4), d = 15 + Math.round(rh(i, 14, SEED+320) * 2);
+    const x = Math.round(s.ax + (s.bx - s.ax)*t + nx*off*side), z = Math.round(s.az + (s.bz - s.az)*t + nz*off*side);
+    if (tryPlace({ x, z, w, d, nf:3, roofUp:true, rooms:true, wall:[0xe9e4d8, 0xd8d0c0, 0xc7ccd0][got % 3], trim:0x5a5650, roofC:0x6f6a64, floorC:0x8a7a66, stairC:0x7a6a58, roofStyle:'flat', parapet:1.0 })) got++;
+  }
+  // 마을 집 6~9채씩 (1~2층)
+  vil.forEach((v, vi) => {
+    const want = 6 + ((rh(vi, 15, SEED+330) * 4) | 0);
+    for (let i = 0, got = 0; i < 60 && got < want; i++){
+      const a = rh(vi*100 + i, 16, SEED+330) * 6.283, r = 10 + rh(vi*100 + i, 17, SEED+330) * 42;
+      const w = 9 + Math.round(rh(vi*100 + i, 18, SEED+330) * 6), d = 8 + Math.round(rh(vi*100 + i, 19, SEED+330) * 5);
+      const nf = rh(vi*100 + i, 20, SEED+330) < 0.45 ? 2 : 1, c = (vi*7 + i) % 5;
+      if (tryPlace({ x:Math.round(v.x + Math.cos(a)*r), z:Math.round(v.z + Math.sin(a)*r), w, d, nf, wall:WALLS[c], trim:TRIM, roofC:ROOFS[c % 4], floorC:0x9a8a72, stairC:0x806c56, roofStyle:'tile' })) got++;
+    }
+  });
+  // 외딴집 6~8채 — 흙길 가
+  for (let i = 0, got = 0; i < 80 && got < 7; i++){
+    const s = ROADS[(i % nv) * 2 + 1], t = 0.2 + rh(i, 21, SEED+340) * 0.6, L = Math.hypot(s.bx - s.ax, s.bz - s.az);
+    const nx = -(s.bz - s.az)/L, nz = (s.bx - s.ax)/L, off = (rh(i, 22, SEED+340) < 0.5 ? 1 : -1) * (12 + rh(i, 23, SEED+340) * 14);
+    const w = 9 + Math.round(rh(i, 24, SEED+340) * 5), d = 8 + Math.round(rh(i, 25, SEED+340) * 4), c = i % 5;
+    if (tryPlace({ x:Math.round(s.ax + (s.bx - s.ax)*t + nx*off), z:Math.round(s.az + (s.bz - s.az)*t + nz*off), w, d, nf:rh(i, 26, SEED+340) < 0.4 ? 2 : 1,
+                   wall:WALLS[c], trim:TRIM, roofC:ROOFS[c % 4], floorC:0x9a8a72, stairC:0x806c56, roofStyle:'tile' })) got++;
+  }
+  for (const p of plans) makeBuilding(p);
+  // 도로변 — 마을 둘레엔 울타리, 포장도로엔 전봇대
+  ROADS.forEach((s, si) => {
+    const L = Math.hypot(s.bx - s.ax, s.bz - s.az), ux = (s.bx - s.ax)/L, uz = (s.bz - s.az)/L, ry = Math.atan2(ux, uz);
+    if (s.paved) for (let t = 10; t < L - 6; t += 32){
+      const x = s.ax + ux*t - uz*(s.w/2 + 1.6), z = s.az + uz*t + ux*(s.w/2 + 1.6), y = heightAt(x, z);
+      if (nearHouse(x, z, 1)) continue;
+      put(CYL, x, y + 3.6, z, 0.13, 7.2, 0.13, 0x5a4a3a); put(BOX, x, y + 6.7, z, 1.6, 0.12, 0.12, 0x4a3a2a, ry + Math.PI/2);
+      addCol(x, y, z, 0.16, 7.2, 0.16);
+    }
+    for (const sg of [-1, 1]) for (let t = 3; t < L - 3; t += 2.6){
+      const x = s.ax + ux*t - uz*sg*(s.w/2 + 3), z = s.az + uz*t + ux*sg*(s.w/2 + 3);
+      if (!vil.some(v => Math.hypot(v.x - x, v.z - z) < 58) || nearHouse(x, z, 2.5) || roadNear(x, z, 1.5)) continue;
+      const y = heightAt(x, z);
+      put(BOX, x, y + 0.5, z, 0.12, 1.0, 0.12, 0x8a6f4a);
+      put(BOX, x, y + 0.75, z, 0.06, 0.08, 2.6, 0x9a7f58, ry); put(BOX, x, y + 0.4, z, 0.06, 0.08, 2.6, 0x9a7f58, ry);
+    }
+  });
+  // 숲 무리 + 흩어진 나무 · 바위
+  let ti = 0;
+  for (let f = 0; f < 16; f++){
+    const a = rh(f, 30, SEED+350) * 6.283, r = 60 + Math.sqrt(rh(f, 31, SEED+350)) * 360, cx = Math.cos(a)*r, cz = Math.sin(a)*r, R = 16 + rh(f, 32, SEED+350) * 20;
+    if (vil.some(v => Math.hypot(v.x - cx, v.z - cz) < 70)) continue;
+    const n = 14 + ((rh(f, 33, SEED+350) * 18) | 0);
+    for (let i = 0; i < n; i++, ti++){
+      const b = rh(ti, 34, SEED+350) * 6.283, q = Math.sqrt(rh(ti, 35, SEED+350)) * R, x = cx + Math.cos(b)*q, z = cz + Math.sin(b)*q, y = heightAt(x, z);
+      if (y < -4 || nearHouse(x, z, 3) || roadNear(x, z, 2)) continue;
+      (ti % 4 === 0 ? tree : leafTree)(x, y, z, ti);
     }
   }
-  scene.add(new THREE.Mesh(merge(ps), SOLID));
+  for (let i = 0; i < 260; i++){
+    const a = rh(i,11,SEED)*Math.PI*2, rr = Math.sqrt(rh(i,12,SEED)) * HALF * 0.93, x = Math.cos(a)*rr, z = Math.sin(a)*rr, y = heightAt(x, z);
+    if (y < -4 || nearHouse(x, z, 3) || roadNear(x, z, 2)) continue;
+    const t = i % 6;
+    if (t < 2) leafTree(x, y, z, i + 900);
+    else if (t < 4) bush(x, y, z, i, [0x4a6e30, 0x3e6228, 0x5a7a38][i % 3]);
+    else rock(x, y, z, i, [0x6e6e66, 0x7a7870, 0x5f625c][i % 3]);
+  }
+  roadMesh(); streamMesh();
+}
+function buildProps(){
+  PS = [];
+  if (MAP_ID === 'meadow') buildMeadow(); else buildDesert();
+  scene.add(new THREE.Mesh(merge(PS), SOLID));
+  PS = null;
 }
 
 // ══ 전리품 ════════════════════════════════════════════════════
@@ -295,35 +802,47 @@ const loots = [];
 let lootMesh = null;
 const _m4 = new THREE.Matrix4(), _q0 = new THREE.Quaternion(), _s0 = new THREE.Vector3(1,1,1);
 function buildLoot(){
-  // 건물 안과 그 둘레에 깐다
-  const spots = [];
+  // 건물 방마다, 층마다 깐다 (lastdrop-07). 3층·옥상은 좋은 물건이 더 잘 나온다 (q 2)
+  const spots = [];                              // [x, y, z, q, 층]
   for (const h of houses){
-    const n = 2 + ((rh(h.x, h.z, SEED+21) * 3) | 0);
-    for (let i=0;i<n;i++){
-      const x = h.x + (rh(h.x+i, h.z, SEED+22) - 0.5) * (h.w - 2);
-      const z = h.z + (rh(h.x, h.z+i, SEED+23) - 0.5) * (h.d - 2);
-      spots.push([x, h.base + 0.35, z]);
-    }
+    h.rooms.forEach((rs, k) => {
+      for (const r of rs){
+        const area = (r.x1 - r.x0) * (r.z1 - r.z0);
+        const n = Math.max(1, Math.min(4, Math.round(area / (k === h.nf ? 70 : 42) * (0.6 + rh(h.x + k*7, h.z + r.x0, SEED+21)))));
+        for (let i = 0; i < n; i++) for (let t = 0; t < 8; t++){
+          const x = r.x0 + 0.8 + rh(h.x + i*13 + t, h.z + k, SEED+22) * (r.x1 - r.x0 - 1.6);
+          const z = r.z0 + 0.8 + rh(h.x + k, h.z + i*13 + t, SEED+23) * (r.z1 - r.z0 - 1.6);
+          const st = h.stair;
+          if (st && x > st.x0 - 0.8 && x < st.x1 + 1.6 && z > st.z0 - 0.8 && z < st.z1 + 0.9) continue;   // 계단·계단 앞은 비운다
+          spots.push([x, h.F(k) + 0.2, z, k >= 2 ? 2 : k, k]); break;
+        }
+      }
+    });
   }
   for (let i=0;i<70;i++){
     const a = rh(i,31,SEED)*Math.PI*2, rr = Math.sqrt(rh(i,32,SEED))*HALF*0.85;
     const x = Math.cos(a)*rr, z = Math.sin(a)*rr;
-    if (heightAt(x,z) < -3) continue;
-    spots.push([x, heightAt(x,z) + 0.35, z]);
+    if (heightAt(x,z) < -3 || nearHouse(x, z, 0.5)) continue;
+    spots.push([x, heightAt(x,z) + 0.35, z, 0, 0]);
   }
   spots.forEach((p, i) => {
-    const r = rh(i, 41, SEED);
+    const q = p[3], r = rh(i, 41, SEED);   // q2(3층·옥상) — 총이 더 잦고, 방어구·가방 단계가 높다
+    const lv = (k) => Math.min(3, 1 + ((rh(i, k, SEED) * 3) | 0) + (q === 2 && rh(i, k + 50, SEED) < 0.6 ? 1 : 0));
     let it;
-    if (r < 0.34){ const gi = (rh(i,42,SEED) * GUNS.length) | 0; it = { kind:LOOT.GUN, gun:gi, ld:GUNS[gi].mag }; }   // 탄창 1개분 장전된 채로
+    if (r < 0.34 || (q === 2 && r < 0.44)){
+      let gi = (rh(i,42,SEED) * GUNS.length) | 0;
+      if (q === 2 && GUN_RANK[GUNS[gi].k] < 3) gi = (rh(i,48,SEED) * GUNS.length) | 0;   // 위층은 한 번 더 굴린다 — 소총·저격·SMG 쪽
+      it = { kind:LOOT.GUN, gun:gi, ld:GUNS[gi].mag };
+    }   // 탄창 1개분 장전된 채로
     else if (r < 0.56){                          // 탄은 한 종류만 — 총 스폰 비율대로 (9mm 2/5)
       const am = GUNS[(rh(i,46,SEED) * GUNS.length) | 0].am;
       it = { kind:LOOT.AMMO, am, n:AMMO[am].pick };
     }
     else if (r < 0.78) it = { kind:LOOT.HEAL, sub:(rh(i,43,SEED) * 4) | 0, n:1 };
-    else if (r < 0.86) it = { kind:LOOT.HELM, sub:1 + ((rh(i,44,SEED) * 3) | 0) };
-    else if (r < 0.94) it = { kind:LOOT.VEST, sub:1 + ((rh(i,45,SEED) * 3) | 0) };
-    else it = { kind:LOOT.BAG, sub:1 + ((rh(i,47,SEED) * 3) | 0) };
-    loots.push(Object.assign(it, { x:p[0], y:p[1], z:p[2], taken:false }));
+    else if (r < 0.86) it = { kind:LOOT.HELM, sub:lv(44) };
+    else if (r < 0.94) it = { kind:LOOT.VEST, sub:lv(45) };
+    else it = { kind:LOOT.BAG, sub:lv(47) };
+    loots.push(Object.assign(it, { x:p[0], y:p[1], z:p[2], fl:p[4], taken:false }));
   });
   const geo = new THREE.BoxGeometry(0.44, 0.3, 0.7);
   const mat = new THREE.MeshStandardMaterial({ vertexColors:true, roughness:0.6, emissiveIntensity:0 });
@@ -515,9 +1034,8 @@ const planePos = (t) => ({
 // 착지점으로 쓸 수 있나 — 육지이고, 벽·지붕·바위 발자국 밖
 function landOK(x, z){
   if (Math.abs(x) > HALF-8 || Math.abs(z) > HALF-8 || heightAt(x, z) < SEA_Y) return false;
-  for (const c of cols)
-    if (x > c.x-c.hw-1 && x < c.x+c.hw+1 && z > c.z-c.hd-1 && z < c.z+c.hd+1 && c.y1 > heightAt(x, z) + 0.3) return false;
-  return true;
+  const gy = heightAt(x, z);
+  return !eachColNear(x, z, 1, (c) => x > c.x-c.hw-1 && x < c.x+c.hw+1 && z > c.z-c.hd-1 && z < c.z+c.hd+1 && c.y1 > gy + 0.3);
 }
 // 집 h 둘레의 빈 땅 (k 로 시도마다 다른 자리)
 function spotNear(h, i, k){
@@ -687,18 +1205,12 @@ function updateDrop(dt){
   }
   if (ents.every(e => e.drop === 'ground')) goLive();
 }
-function landFloor(x, z, fromY){               // 지붕 위로 내려오면 지붕에 선다
-  let f = heightAt(x, z);
-  for (const c of cols){
-    if (x > c.x-c.hw && x < c.x+c.hw && z > c.z-c.hd && z < c.z+c.hd && c.y1 <= fromY + 0.6 && c.y1 > f) f = c.y1;
-  }
-  return f;
-}
+const landFloor = floorAt;                       // 지붕 위로 내려오면 지붕에 선다
 function unstick(e){                             // 벽·바위 속에 내렸으면 가까운 빈 자리로 빼 준다
   if (!blocked(e.x, e.y, e.z, BODY_R)) return;
   for (let r = 0.5; r <= 4; r += 0.5)
     for (let i = 0; i < 8; i++){
-      const t = i * Math.PI/4, x = e.x + Math.sin(t)*r, z = e.z + Math.cos(t)*r, y = heightAt(x, z);
+      const t = i * Math.PI/4, x = e.x + Math.sin(t)*r, z = e.z + Math.cos(t)*r, y = floorAt(x, z, e.y);
       if (!blocked(x, y, z, BODY_R)){ e.x = x; e.z = z; e.y = y; return; }
     }
 }
@@ -738,16 +1250,22 @@ function buildCars(){
   put(-1.02, 0.45, -1.4, 0.3, 0.9, 0.9, 0x1e2124);
   put( 1.02, 0.45, -1.4, 0.3, 0.9, 0.9, 0x1e2124);
   const geo = merge(ps);
-  for (let i=0;i<3;i++){
-    let x=0, z=0;
+  const nCar = ROADS.length ? 5 : 3;
+  for (let i=0;i<nCar;i++){
+    let x=0, z=0, yaw = rh(i,93,SEED)*6.283;
     for (let t=0;t<60;t++){
-      const a = rh(i,91,SEED)*6.283 + t*0.3, r = 90 + rh(i,92,SEED)*300;
-      x = Math.cos(a)*r; z = Math.sin(a)*r;
-      if (heightAt(x,z) > -2 && !blocked(x, heightAt(x,z), z, 2.6)) break;
+      if (ROADS.length){                         // 초원 — 도로 위에, 도로 방향으로
+        const s = ROADS[(rh(i*7+t,94,SEED) * ROADS.length) | 0], u = 0.15 + rh(i,95+t,SEED)*0.7;
+        x = s.ax + (s.bx - s.ax)*u; z = s.az + (s.bz - s.az)*u; yaw = Math.atan2(-(s.bx - s.ax), -(s.bz - s.az));
+      } else {
+        const a = rh(i,91,SEED)*6.283 + t*0.3, r = 90 + rh(i,92,SEED)*300;
+        x = Math.cos(a)*r; z = Math.sin(a)*r;
+      }
+      if (heightAt(x,z) > -2 && !blocked(x, heightAt(x,z), z, 2.6) && !cars.some(c => Math.hypot(c.x - x, c.z - z) < 30)) break;
     }
     const mesh = new THREE.Mesh(geo, SOLID);
     scene.add(mesh);
-    cars.push({ x, z, y:heightAt(x,z), yaw:rh(i,93,SEED)*6.283, spd:0, mesh, hp:CAR.hp, dead:false, boomAt:0, fire:null, killer:null });
+    cars.push({ x, z, y:heightAt(x,z), yaw, spd:0, mesh, hp:CAR.hp, dead:false, boomAt:0, fire:null, killer:null });
   }
 }
 // ══ 지프 파괴 (29 문서) ══════════════════════════════════════
@@ -799,8 +1317,7 @@ function destroyCar(c, by){
   c.fire.position.set(c.x, c.y, c.z); c.fire.rotation.y = c.yaw; scene.add(c.fire);
   // 잔해는 엄폐물 — 회전된 차체를 감싸는 상자로 이동·총알을 막는다
   const cs = Math.abs(Math.cos(c.yaw)), sn = Math.abs(Math.sin(c.yaw));
-  addCol(c.x, c.y, c.z, cs*1.0 + sn*2.15, 1.65, sn*1.0 + cs*2.15);
-  c.col = cols[cols.length - 1];
+  c.col = addCol(c.x, c.y, c.z, cs*1.0 + sn*2.15, 1.65, sn*1.0 + cs*2.15);
   sBoom(Math.hypot(c.x - me().x, c.z - me().z) + 40);
   if (c === riding){                             // 탑승자 강제 하차 + 피해
     toggleRide();
@@ -813,7 +1330,7 @@ function explodeCar(c){
   const bx = c.x, by = c.y + 0.8, bz = c.z;
   fx(bx, by + 0.6, bz, 6, 0.5, false); fx(bx, by + 1.6, bz, 4, 0.7, false);
   sBoom(Math.hypot(bx - me().x, bz - me().z));
-  const ci = cols.indexOf(c.col); if (ci >= 0) cols.splice(ci, 1);   // 시야 검사 동안 잔해 자신은 뺀다
+  if (c.col) c.col.off = true;                   // 시야 검사 동안 잔해 자신은 뺀다
   for (const e of ents){
     if (!e.alive || e.drop === 'plane') continue;
     const d = Math.hypot(e.x - bx, (e.y + 0.9) - by, e.z - bz);
@@ -822,7 +1339,7 @@ function explodeCar(c){
     if (d > 0.5 && rayWorld(bx, by, bz, dx, dy, dz, d) < d - 0.3) continue;   // 사이에 벽이 있으면 막힌다
     hurt(e, CAR.boomDmg * (1 - d / CAR.boomR), c.killer, null, '지프 폭발');
   }
-  if (c.col) cols.push(c.col);
+  if (c.col) c.col.off = false;
 }
 function updateWrecks(){
   for (const c of cars){
@@ -894,6 +1411,9 @@ function toggleRide(){
 
 // ══ 레드존 · 보급 상자 ════════════════════════════════════════
 const red = { on:false, t:RED_EVERY, x:0, z:0, left:0, ring:null };
+let redBlasts = 0, redHits = 0, redSaved = 0;
+// 머리 위로 60m 안에 지붕·천장 콜라이더가 있나 (나무 줄기 같은 가는 것도 걸리면 덮인 걸로 본다)
+const redCovered = (e) => rayWorld(e.x, e.y + 1.75 * STANCE[e.st].h + 0.1, e.z, 0, 1, 0, 60) < 60;
 function buildRed(){
   const g = new THREE.CylinderGeometry(1,1,120,40,1,true);
   red.ring = new THREE.Mesh(g, new THREE.MeshBasicMaterial({
@@ -921,14 +1441,20 @@ function updateRed(dt){
   if (Math.random() < dt * 7){                      // 포탄이 떨어진다
     const a = Math.random()*6.283, r = Math.sqrt(Math.random())*RED_R;
     const bx = red.x + Math.cos(a)*r, bz = red.z + Math.sin(a)*r;
-    const by = heightAt(bx, bz);
+    const by = surfaceAt(bx, bz);                  // 지붕이 있으면 지붕 위에서 터진다 (lastdrop-07)
     fx(bx, by+1.6, bz, 7, 0.4, false);
     const dp = Math.hypot(bx-me().x, bz-me().z);
     sBoom(dp);
+    redBlasts++;
     for (const e of ents){
       if (!e.alive || e.drop !== 'ground') continue;
       const d = Math.hypot(e.x-bx, e.z-bz);
-      if (d < 11) hurt(e, (1 - d/11) * 92, null, null);
+      if (d >= 11) continue;
+      if (redCovered(e)){ redSaved++; continue; }   // 머리 위에 지붕·윗층 바닥이 있다
+      const ox = bx, oy = by + 0.5, oz = bz, ty = e.y + 1.0, L = Math.hypot(e.x-ox, ty-oy, e.z-oz) || 1;
+      if (rayWorld(ox, oy, oz, (e.x-ox)/L, (ty-oy)/L, (e.z-oz)/L, L) < L - 0.3){ redSaved++; continue; }   // 벽이 막는다
+      hurt(e, (1 - d/11) * 92, null, null);
+      redHits++;
     }
   }
 }
@@ -1120,9 +1646,22 @@ function rayBox(ox,oy,oz,dx,dy,dz,c,maxT){
 }
 function rayWorld(ox,oy,oz,dx,dy,dz,maxT){
   let best = maxT;
-  for (let i=0;i<cols.length;i++){
-    const t = rayBox(ox,oy,oz,dx,dy,dz,cols[i],best);
-    if (t > 0 && t < best) best = t;
+  // 광선이 지나는 격자 칸만 (2D DDA). 여러 칸에 걸친 상자는 한 번만 잰다
+  const st = ++colStamp;
+  let i = Math.floor(ox / CELL), j = Math.floor(oz / CELL);
+  const si = dx > 0 ? 1 : -1, sj = dz > 0 ? 1 : -1, ax = Math.abs(dx), az = Math.abs(dz);
+  const tdx = ax > 1e-9 ? CELL / ax : Infinity, tdz = az > 1e-9 ? CELL / az : Infinity;
+  let tmx = ax > 1e-9 ? ((dx > 0 ? (i + 1) * CELL - ox : ox - i * CELL) / ax) : Infinity;
+  let tmz = az > 1e-9 ? ((dz > 0 ? (j + 1) * CELL - oz : oz - j * CELL) / az) : Infinity;
+  for (let t = 0, n = 0; t <= best && n < 200; n++){
+    const a = colGrid.get(cellKey(i + COFF, j + COFF));
+    if (a) for (const c of a){
+      if (c.s === st || c.off) continue; c.s = st;
+      const h = rayBox(ox,oy,oz,dx,dy,dz,c,best);
+      if (h > 0 && h < best) best = h;
+    }
+    if (tmx < tmz){ t = tmx; tmx += tdx; i += si; } else { t = tmz; tmz += tdz; j += sj; }
+    if (Math.abs(i) > 40 || Math.abs(j) > 40) break;
   }
   let prev = 0;
   for (let t=0.7; t<best; t += (t<50 ? 1.1 : 3.2)){
@@ -1356,6 +1895,7 @@ function botThink(b){
     if (d < bd && d < T.sight && canSee(b, o)){ bd = d; best = o; }
   }
   if (best && best !== b.target){                // 보자마자 쏘지는 않는다
+    botHighGround(b, best);
     b.react = rnd(T.react);
     b.fresh = 2;                                 // 새 표적의 처음 2발
     rollAim(b);
@@ -1381,7 +1921,7 @@ function findCover(b, t){                        // 표적 눈높이에서 안 �
   const ty = t.y + 1.5;
   for (let i = 0; i < 12; i++){
     const a = Math.random()*6.283, r = 3 + Math.random()*3;
-    const x = b.x + Math.sin(a)*r, z = b.z + Math.cos(a)*r, y = heightAt(x, z) + 1.2;
+    const x = b.x + Math.sin(a)*r, z = b.z + Math.cos(a)*r, y = floorAt(x, z, b.y) + 1.2;
     if (blocked(x, y-1.2, z, BODY_R)) continue;
     const dx = x-t.x, dy = y-ty, dz = z-t.z, L = Math.hypot(dx,dy,dz);
     if (rayWorld(t.x, ty, t.z, dx/L, dy/L, dz/L, L) < L - 0.6){ b.cx = x; b.cz = z; b.coverT = 2.5; return true; }
@@ -1408,13 +1948,13 @@ function botHeal(b, dt){                         // 어려움 이상 — 안 보
 // ══ 봇 파밍 (lastdrop-06) ════════════════════════════════════
 // 맨손으로 내려 주변 전리품을 줍는다: 총 → 그 총 탄 → 방탄복·헬멧 → 가방 → 회복템 (죽은 상자도).
 // 줍기는 나와 같은 takeItem — 탄 종류·가방 용량 규칙이 같고, 주운 건 맵에서 사라진다.
-// 집 안 전리품은 문으로 드나든다(문 앞 2m → 문 중앙 → 안쪽). 8초 안에 못 닿으면 그 봇은 그 전리품을 포기한다.
+// 건물 안 전리품은 건물 그래프로 드나든다(문 → 방 → 계단 → 위층, lastdrop-07). 8초 동안 웨이포인트를 하나도 못 지나면 그 봇은 그 전리품을 포기한다.
 const LOOT_R = [12, 15, 20, 25, 32, 40];        // 단계별 파밍 반경(시야 무관)
 const PICK_T = [1.5, 1.2, 0.9, 0.7, 0.5, 0.3];  // 줍는 데 걸리는 시간
 const GUN_RANK = { pistol:1, shot:2, sniper:3, smg:3, rifle:4 };
 const armedNeed = (g) => Math.min(30, g.mag * 3); // 교전에 나설 탄 — 30발 (샷건·저격은 탄창 3개분)
 const GIVE_UP = 8;
-let lootGiveUps = 0;
+let lootGiveUps = 0, botPicks = 0, botUpPicks = 0;
 function botArmed(b){                            // 한 번 무장하면 탄이 남아 있는 동안은 무장
   const gs = allGuns(b);
   b.armed = b.armed ? gs.some(h => ammoOf(b, h) > 0) : gs.some(h => ammoOf(b, h) >= armedNeed(GUNS[h.gi]));
@@ -1466,10 +2006,6 @@ function lootWant(b, it){                        // 이게 얼마나 필요한�
   }
   return 0;
 }
-function houseAt(x, z){
-  for (const h of houses) if (Math.abs(x - h.x) < h.w/2 - 0.2 && Math.abs(z - h.z) < h.d/2 - 0.2) return h;
-  return null;
-}
 // 선분 a→b 가 집 h(둘레 m 만큼 넓혀서)를 지나가나 — Liang–Barsky
 function segHits(ax, az, bx, bz, h, m){
   const x0 = h.x - h.w/2 - m, x1 = h.x + h.w/2 + m, z0 = h.z - h.d/2 - m, z1 = h.z + h.d/2 + m;
@@ -1515,49 +2051,68 @@ function routeSeg(a, g, depth, out){
   for (const c of cs){ routeSeg(prev, c, depth + 1, out); out.push(c); prev = c; }
   routeSeg(prev, g, depth + 1, out);
 }
-// (tx,tz) 까지 웨이포인트. 집 안을 드나들 땐 문(앞 +z 벽 가운데, 폭 2.4m)으로,
-// 집 밖 구간이 어느 집이든(나온 집·들어갈 집 포함) 관통하면 그 집 모서리를 돌아간다
-function pathTo(b, tx, tz){
-  const pts = [], hb = houseAt(b.x, b.z), ht = houseAt(tx, tz);
-  if (hb && hb !== ht)                           // 안 → 밖: 안쪽 → 문 중앙 → 문 앞 2m
-    pts.push({ x:hb.x, z:hb.z + hb.d/2 - 1.2 }, { x:hb.x, z:hb.z + hb.d/2 }, { x:hb.x, z:hb.z + hb.d/2 + 2 });
-  if (!(hb && hb === ht)){                       // 같은 집 안이면 바로 간다
-    const goal = ht ? { x:ht.x, z:ht.z + ht.d/2 + 2 } : { x:tx, z:tz };   // 집 안이 목표면 우선 그 집 문 앞 2m
-    let start = pts.length ? pts[pts.length - 1] : { x:b.x, z:b.z };
-    for (const h of houses){                     // 벽·문간에 붙어 서 있으면 먼저 가장 가까운 변 바깥으로 1.2m 빠진다
-      const L = start.x - (h.x - h.w/2), Rr = (h.x + h.w/2) - start.x, B = start.z - (h.z - h.d/2), F = (h.z + h.d/2) - start.z;
-      if (Math.min(L, Rr, B, F) < -0.5) continue;   // 이 집 둘레 0.5m 밖이다
-      const m = Math.min(Math.abs(L), Math.abs(Rr), Math.abs(B), Math.abs(F)), o = 1.7;
-      start = m === Math.abs(F) ? { x:start.x, z:h.z + h.d/2 + o } : m === Math.abs(B) ? { x:start.x, z:h.z - h.d/2 - o }
-            : m === Math.abs(L) ? { x:h.x - h.w/2 - o, z:start.z } : { x:h.x + h.w/2 + o, z:start.z };
-      pts.push(start);
-      break;
-    }
-    routeSeg(start, goal, 0, pts);
-    if (ht) pts.push({ x:ht.x, z:ht.z + ht.d/2 + 2 }, { x:ht.x, z:ht.z + ht.d/2 }, { x:ht.x, z:ht.z + ht.d/2 - 1.2 });   // 문 앞 2m → 문 중앙 → 안쪽
+// (tx,ty,tz) 까지 웨이포인트 (lastdrop-07). 건물 안은 그 건물 그래프의 최단 경로(방 → 문 구멍 → 계단 → 위층 …),
+// 밖은 예전처럼 집을 모서리로 돌아간다. 나갈 땐 그래프로 문 밖 2m 까지, 들어갈 땐 문 밖 2m 부터 그래프로.
+function pathTo(b, tx, ty, tz){
+  const pts = [], sl = locate(b.x, b.y, b.z), tl = locate(tx, ty, tz);
+  if (sl && tl && sl.h === tl.h){                 // 같은 건물 안
+    pts.push(...graphPath(sl.h, sl.n, tl.n), { x:tx, y:ty, z:tz });
+    return pts;
   }
-  pts.push({ x:tx, z:tz });
+  if (sl) pts.push(...graphPath(sl.h, sl.n, sl.h.out));   // 안 → 밖: 방 · 계단을 거쳐 문 밖 2m
+  const goal = tl ? tl.h.nodes[tl.h.out] : { x:tx, z:tz };
+  let start = pts.length ? pts[pts.length - 1] : { x:b.x, z:b.z };
+  if (!sl) for (const h of houses){              // 벽·문간에 붙어 서 있으면 먼저 가장 가까운 변 바깥으로 1.7m 빠진다
+    const L = start.x - (h.x - h.w/2), Rr = (h.x + h.w/2) - start.x, B = start.z - (h.z - h.d/2), Fz = (h.z + h.d/2) - start.z;
+    if (Math.min(L, Rr, B, Fz) < -0.5) continue;
+    const m = Math.min(Math.abs(L), Math.abs(Rr), Math.abs(B), Math.abs(Fz)), o = 1.7;
+    start = m === Math.abs(Fz) ? { x:start.x, z:h.z + h.d/2 + o } : m === Math.abs(B) ? { x:start.x, z:h.z - h.d/2 - o }
+          : m === Math.abs(L) ? { x:h.x - h.w/2 - o, z:start.z } : { x:h.x + h.w/2 + o, z:start.z };
+    pts.push(start);
+    break;
+  }
+  routeSeg(start, goal, 0, pts);
+  if (tl) pts.push(...graphPath(tl.h, tl.h.out, tl.n));   // 밖 → 안: 문 밖 2m → 문 → 방 · 계단 → 목표 방
+  pts.push({ x:tx, y:ty, z:tz });
   return pts;
 }
-// key 칸에 (tx,tz) 로 가는 길을 둔다. 목표가 바뀌거나, 길을 만들 때와 다른 집 안에 들어와 있으면 다시 만든다.
-// (집에서 나서는 순간엔 다시 만들지 않는다 — 나온 집을 돌아가는 모서리 웨이포인트를 지켜야 한다)
-function nav(b, key, tx, tz){
-  const hb = houseAt(b.x, b.z), n = b[key];
-  if (!n || (hb && n.hb !== hb) || Math.hypot(n.tx - tx, n.tz - tz) > 0.5) b[key] = { pts:pathTo(b, tx, tz), hb, tx, tz };
-  return follow(b, b[key].pts);
+const houseAt = (x, z, y) => { const l = locate(x, y === undefined ? heightAt(x, z) : y, z); return l ? l.h : null; };
+// key 칸에 (tx,ty,tz) 로 가는 길을 둔다. 목표가 바뀌거나, 길을 만들 때와 다른 건물 안에 들어와 있으면 다시 만든다.
+// 웨이포인트가 5초 넘게 하나도 안 줄면(층을 헛디뎌 떨어졌다 등) 다시 만든다.
+function nav(b, key, tx, tz, ty){
+  if (ty === undefined) ty = heightAt(tx, tz);     // 높이를 안 주면 땅 (건물 안이면 1층)
+  const hb = houseAt(b.x, b.z, b.y), n = b[key];
+  if (!n || (hb && n.hb !== hb) || Math.hypot(n.tx - tx, n.tz - tz, n.ty - ty) > 0.5 || n.stall > 5){
+    b[key] = { pts:pathTo(b, tx, ty, tz), hb, tx, ty, tz, stall:0, len:-1 };
+    navBuilds++;
+  }
+  const r = follow(b, b[key].pts), q = b[key];
+  if (q.pts.length !== q.len){ q.len = q.pts.length; q.stall = 0; } else q.stall += botDt;
+  return r;
 }
-function follow(b, path){                        // 웨이포인트를 하나씩 지운다
-  while (path.length > 1 && Math.hypot(path[0].x - b.x, path[0].z - b.z) < 0.6) path.shift();
+let navBuilds = 0, botDt = 0;
+function follow(b, path){                        // 웨이포인트를 하나씩 지운다 — 같은 층에 닿아야 지운다 (계단 위·아래 노드는 xz 가 같다)
+  // 계단 노드는 0.2m 까지 붙어야 지운다 — 줄 가운데에 서야 칸막이 끝에 안 걸린다
+  while (path.length > 1 && Math.hypot(path[0].x - b.x, path[0].z - b.z) < (path[0].tight ? 0.2 : 0.6) && (path[0].y === undefined || Math.abs(path[0].y - b.y) < 1.5)) path.shift();
   const q = path[0], dx = q.x - b.x, dz = q.z - b.z, d = Math.hypot(dx, dz) || 1;
-  return { mx:dx/d, mz:dz/d, run: d > 3 };      // 파밍·집 뒤지기는 뛴다 (웨이포인트 가까이선 걷는다)
+  return { mx:dx/d, mz:dz/d, run: d > 3 || path.length > 2 };   // 파밍·집 뒤지기는 뛴다 (마지막 웨이포인트 가까이선 걷는다)
 }
+// 계단에 오래 머무는 봇 세기 (검증용) — 계단 칸 안에 8초 넘게
+function botStairWatch(b, dt){
+  const l = locate(b.x, b.y, b.z), on = l && l.h.stair && b.x > l.h.stair.x0 && b.x < l.h.stair.x1 && b.z > l.h.stair.z0 && b.z < l.h.stair.z1;
+  if (!on){ b.stairT = 0; return; }
+  b.stairT = (b.stairT || 0) + dt;
+  if (b.stairT > 8 && !b.stairStuck){ b.stairStuck = true; stairStuck++; }
+  if (b.fl === undefined) b.fl = 0;
+}
+let stairStuck = 0;
 function botLootPick(b){
   const R = LOOT_R[b.tier], bare = !allGuns(b).length;
   let best = -1, bs = 0;
   for (let i = 0; i < loots.length; i++){
     const l = loots[i];
     if (l.taken || (b.skip && b.skip.has(l))) continue;
-    const d = Math.hypot(l.x - b.x, l.z - b.z);
+    const d = Math.hypot(l.x - b.x, l.z - b.z) + Math.abs(l.y - b.y) * 1.5;   // 층 차이는 계단 길만큼 더 멀다
     if (d > R || Math.hypot(l.x - zone.cx, l.z - zone.cz) > zone.r) continue;   // 자기장 밖 전리품은 안 간다
     const w = lootWant(b, l);
     if (bare && w < 80 && d > 8) continue;       // 총이 없으면 먼 회복템·방어구보다 총 찾기(집 뒤지기)가 먼저
@@ -1581,7 +2136,7 @@ function botLoot(b, dt){
   if (!(b.lootI >= 0) && (b.lootCD = (b.lootCD || 0) - dt) <= 0){
     b.lootCD = 0.5;
     const i = botLootPick(b);
-    if (i >= 0){ b.lootI = i; b.lootT = 0; b.pickT = 0; b.exH = null; }
+    if (i >= 0){ b.lootI = i; b.lootT = 0; b.pickT = 0; b.exH = null; b.lootPL = 1e9; }
     else if (!b.armed && !b.exH){                // 맨손인데 근처에 없다 — 집을 뒤지러 간다
       const h = nextHouse(b);
       if (h){ b.exH = h; b.lootT = 0; }
@@ -1589,22 +2144,30 @@ function botLoot(b, dt){
   }
   if (b.lootI >= 0){
     const l = loots[b.lootI];
-    if ((b.lootT += dt) > GIVE_UP){              // 못 닿는 자리 — 이 봇은 포기
+    const pl = b.path && b.path.tx === l.x && b.path.tz === l.z ? b.path.pts.length : -1;
+    if (pl >= 0 && pl < (b.lootPL ?? 1e9)) b.lootT = 0;   // 웨이포인트를 하나 지날 때마다 8초를 다시 잰다 (저택 3층·옥상은 8초보다 멀다)
+    b.lootPL = pl < 0 ? b.lootPL : pl;
+    if ((b.lootT += dt) > GIVE_UP){              // 8초 동안 한 걸음도 못 나아갔다 — 이 봇은 포기
       (b.skip || (b.skip = new Set())).add(l); lootGiveUps++; b.lootI = -1; return null;
     }
-    if (Math.hypot(l.x - b.x, l.z - b.z) > 1.1) return nav(b, 'path', l.x, l.z);
+    if (Math.hypot(l.x - b.x, l.z - b.z) > 1.1 || Math.abs(l.y - 0.2 - b.y) > 1.3) return nav(b, 'path', l.x, l.z, Math.max(heightAt(l.x, l.z), l.y - 0.35));
     if ((b.pickT += dt) < PICK_T[b.tier]) return STOP;
     if (l.kind === LOOT.BOX){
       for (let j = l.items.length - 1; j >= 0; j--) if (lootWant(b, l.items[j]) > 0) boxTakeBy(b, b.lootI, j);
-    } else if (takeLootBy(b, b.lootI) !== null) (b.skip || (b.skip = new Set())).add(l);
+    } else {
+      const fl = l.fl || 0;
+      if (takeLootBy(b, b.lootI) !== null) (b.skip || (b.skip = new Set())).add(l);
+      else { botPicks++; if (fl >= 1) botUpPicks++; }
+    }
     if (!l.taken && l.kind === LOOT.BOX) (b.skip || (b.skip = new Set())).add(l);
     b.lootI = -1; b.lootCD = 0;
     return STOP;
   }
   if (b.exH){
     const h = b.exH;
-    if (Math.hypot(h.x - b.x, h.z - b.z) < 2.5 || (b.lootT += dt) > 20){ (b.seenH || (b.seenH = new Set())).add(h); b.exH = null; return STOP; }
-    return nav(b, 'path', h.x, h.z);
+    const ex = h.nodes[h.rooms[0][0].n];          // 1층 첫 방
+    if ((Math.hypot(ex.x - b.x, ex.z - b.z) < 2.5 && Math.abs(ex.y - b.y) < 1.5) || (b.lootT += dt) > 20){ (b.seenH || (b.seenH = new Set())).add(h); b.exH = null; return STOP; }
+    return nav(b, 'path', ex.x, ex.z, ex.y);
   }
   return null;
 }
@@ -1614,8 +2177,51 @@ function botPunch(b, t){                         // 주먹 — 붙어 있으면 
   const dx = t.x - b.x, dy = (t.y + 1.2*STANCE[t.st].h) - (b.y + 1.4*STANCE[b.st].h), dz = t.z - b.z, L = Math.hypot(dx, dy, dz) || 1;
   punch(b, dx/L, dy/L, dz/L);
 }
+// 레드존 (lastdrop-07) — 어려움 이상은 40m 안 건물 1층(위가 막힌 방)으로 숨고, 그 아래는 레드존 밖으로 뛴다
+function redEscape(b){
+  if (!red.on || Math.hypot(b.x - red.x, b.z - red.z) > RED_R + 6){ b.redG = null; return null; }
+  if (!b.redG){
+    let g = null, bd = 40;
+    if (b.tier >= 4) for (const h of houses){
+      const n = h.nodes[h.rooms[0][0].n], d = Math.hypot(n.x - b.x, n.z - b.z);
+      if (d < bd){ bd = d; g = { x:n.x, y:n.y, z:n.z, shelter:true }; }
+    }
+    if (!g){
+      const a = Math.atan2(b.z - red.z, b.x - red.x), R = RED_R + 12;
+      g = { x:Math.max(-HALF+20, Math.min(HALF-20, red.x + Math.cos(a)*R)), z:Math.max(-HALF+20, Math.min(HALF-20, red.z + Math.sin(a)*R)) };
+      g.y = heightAt(g.x, g.z);
+    }
+    b.redG = g; b.redSafe = false;
+  }
+  const g = b.redG;
+  if (g.shelter && redCovered(b) && Math.hypot(g.x - b.x, g.z - b.z) < 2.5){ if (!b.redSafe){ b.redSafe = true; redShelters++; } return STOP; }
+  const f = nav(b, 'redPath', g.x, g.z, g.y); f.run = true;
+  return f;
+}
+let redShelters = 0, hgTries = 0, hgArrive = 0;
+const onStairs = (e) => { const l = locate(e.x, e.y, e.z), s = l && l.h.stair; return !!(s && e.x > s.x0 && e.x < s.x1 && e.z > s.z0 && e.z < s.z1); };
+// 높은 곳 (lastdrop-07) — 어려움 이상, 총이 있고 새 표적이 15m 밖이면 30m 안 여러 층 건물의 꼭대기 층·옥상으로 (표적마다 한 번)
+function botHighGround(b, t){
+  if (b.tier < 4 || !b.armed || Math.hypot(t.x - b.x, t.z - b.z) < 15) return;
+  if (!b.hgDone) b.hgDone = new Set();
+  if (b.hgDone.has(t)) return;
+  b.hgDone.add(t);
+  let best = null, bd = 30;
+  for (const h of houses){
+    if (h.nf < 2) continue;
+    const d = Math.hypot(h.x - b.x, h.z - b.z);
+    if (d < bd){ bd = d; best = h; }
+  }
+  if (!best) return;
+  const top = best.rooms[best.rooms.length - 1];
+  let rn = top[0];                               // 꼭대기 층에서 표적에 가장 가까운 방 (옥상이면 옥상)
+  for (const r of top){ const n = best.nodes[r.n], m = best.nodes[rn.n]; if (Math.hypot(n.x - t.x, n.z - t.z) < Math.hypot(m.x - t.x, m.z - t.z)) rn = r; }
+  const n = best.nodes[rn.n];
+  b.hg = { x:n.x, y:n.y, z:n.z, t:0, tg:t }; hgTries++;
+}
 function updateBot(b, dt){
   if (b.drop !== 'ground') return;
+  botDt = dt;
   const T = TIERS[b.tier];
   b.st = (b.target && b.target.alive
           && Math.hypot(b.target.x-b.x, b.target.z-b.z) < 42) ? 1 : 0;
@@ -1631,7 +2237,7 @@ function updateBot(b, dt){
   let mx = 0, mz = 0, run = false;
   if (T.move >= 4 && botHeal(b, dt)){           // 회복 중엔 앉아서 멈춘다
     b.st = 1;
-    if (b.mesh) b.y = heightAt(b.x, b.z);
+    if (b.mesh) b.y = floorAt(b.x, b.z, b.y);
     return;
   }
   if (b.coverT > 0){                             // 하드코어 — 장전·빈사 때 엄폐로 뛴다
@@ -1659,6 +2265,15 @@ function updateBot(b, dt){
       else { mx = fz*b.side*sideAmp; mz = -fx*b.side*sideAmp; }
       if (T.move >= 4 && d <= want) { mx += fz*b.side*0.6; mz += -fx*b.side*0.6; }
     }
+    const hgGo = b.hg && b.hg.tg === b.target;
+    if (hgGo){                                   // 높은 곳으로 가는 중 — 가면서도 쏜다
+      if (Math.hypot(b.hg.x - b.x, b.hg.z - b.z) < 1.5 && Math.abs(b.hg.y - b.y) < 1.2){ b.hgHold = b.target; b.hg = null; hgArrive++; }
+      else if ((b.hg.t += dt) > 16) b.hg = null;
+      else { const f = nav(b, 'hgPath', b.hg.x, b.hg.z, b.hg.y); mx = f.mx; mz = f.mz; run = true; }
+    }
+    if (!hgGo && (b.hgHold === b.target || onStairs(b))){ mx *= 0.15; mz *= 0.15; }   // 높은 곳·계단에선 그 자리에서 싸운다 (높은 곳으로 가는 중엔 안 멈춘다)
+    const rz = redEscape(b);
+    if (rz){ mx = rz.mx; mz = rz.mz; run = rz.run; }
     // 사격
     if (b.react > 0) b.react -= dt;
     if (g && b.react <= 0 && b.cd <= 0 && b.reload <= 0 && d < g.range*1.1 && canSee(b, b.target)){
@@ -1694,6 +2309,7 @@ function updateBot(b, dt){
       if (!findCover(b, foe)){ b.cx = b.x - (foe.x-b.x)/fd*12; b.cz = b.z - (foe.z-b.z)/fd*12; b.coverT = 2; }
       b.fleeCD = 6;
     }
+    if (!mv) mv = redEscape(b);
     if (!mv && !outOfZone(b)) mv = botLoot(b, dt);   // 약간 어려움 이하는 적을 봐도 계속 줍는다
     if (b.fleeCD > 0) b.fleeCD -= dt;
     if (mv){ mx = mv.mx; mz = mv.mz; run = mv.run; if (mx || mz) b.yaw = Math.atan2(mx, mz); }
@@ -1720,7 +2336,8 @@ function updateBot(b, dt){
     b.stuckT = got < sp*0.3 ? (b.stuckT || 0) + dt : 0;
     if (b.stuckT > 0.4){ b.stuckT = 0; botDetour(b, Math.atan2(mx, mz)); }
   }
-  b.y = heightAt(b.x, b.z);
+  b.y = floorAt(b.x, b.z, b.y);                  // 나와 같은 바닥 판정 — 층 바닥·계단·지붕 (lastdrop-07)
+  botStairWatch(b, dt);
 }
 function botDetour(b, a){
   if (blocked(b.x, b.y, b.z, BODY_R)){         // 벽 속에 내렸으면 가까운 빈 자리로 빼 준다
@@ -1738,11 +2355,28 @@ function botDetour(b, a){
 }
 
 // ══ 이동 ══════════════════════════════════════════════════════
-function moveEnt(e, dx, dz){
-  const nx = e.x + dx;
-  if (Math.abs(nx) < HALF-4 && !blocked(nx, e.y, e.z, BODY_R)) e.x = nx;
-  const nz2 = e.z + dz;
-  if (Math.abs(nz2) < HALF-4 && !blocked(e.x, e.y, nz2, BODY_R)) e.z = nz2;
+// 0.6m 까지는 걸어 오른다 (계단 한 단 0.283m · 문턱) — 앞을 막은 게 발밑 0.6m 안의 윗면이면 그 위로 (lastdrop-07)
+const STEP_UP = 0.6;
+function canStep(e, x, z){
+  if (!blocked(x, e.y, z, BODY_R)) return true;
+  let top = e.y;                                 // 몸에 닿는 것 중 걸어 오를 수 있는(윗면이 0.6m 안) 가장 높은 윗면
+  eachColNear(x, z, BODY_R, (c) => {
+    if (c.y1 > e.y && c.y1 <= e.y + STEP_UP && c.y1 > top && x > c.x - c.hw - BODY_R && x < c.x + c.hw + BODY_R && z > c.z - c.hd - BODY_R && z < c.z + c.hd + BODY_R) top = c.y1;
+    return false;
+  });
+  if (top === e.y || blocked(x, top, z, BODY_R)) return false;   // 그 높이에 섰을 때 몸(발~머리)이 걸리면 못 간다 (천장·벽)
+  const f = floorAt(x, z, e.y);
+  if (f > e.y) e.y = f;                          // 발밑이 한 단 위면 바로 올라선다
+  return true;
+}
+function moveEnt(e, dx, dz){                     // 0.12m 조각으로 나눠 간다 (한 번에 크게 가면 몸이 두세 단 앞까지 닿아 막힌다)
+  const n = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dz)) / 0.12)), sx = dx / n, sz = dz / n;
+  for (let i = 0; i < n; i++){
+    const nx = e.x + sx;
+    if (sx && Math.abs(nx) < HALF-4 && canStep(e, nx, e.z)) e.x = nx;
+    const nz2 = e.z + sz;
+    if (sz && Math.abs(nz2) < HALF-4 && canStep(e, e.x, nz2)) e.z = nz2;
+  }
 }
 const keys = {};
 let locked = false, playing = false, firing = false;
@@ -1762,13 +2396,9 @@ function movePlayer(dt){
   if (L > 0){ mx/=L; mz/=L; if (p.healT > 0){ p.healT = 0; hudGun(); } }
   moveEnt(p, mx*sp*dt, mz*sp*dt);
 
-  const gy = heightAt(p.x, p.z);
-  let floor = gy;
-  for (const c of cols){                        // 지붕·바닥 위에 설 수 있게
-    if (p.x > c.x-c.hw && p.x < c.x+c.hw && p.z > c.z-c.hd && p.z < c.z+c.hd){
-      if (c.y1 <= p.y + 0.6 && c.y1 > floor) floor = c.y1;
-    }
-  }
+  const floor = floorAt(p.x, p.z, p.y);          // 지붕·층 바닥·계단 위에 설 수 있게
+  if (p.onGround && floor > p.y && floor <= p.y + STEP_UP){ p.y = floor; }   // 계단을 오르면 바로 그 단에
+  else if (p.onGround && p.vy <= 0 && floor < p.y && floor >= p.y - 0.35){ p.y = floor; }   // 내려갈 때도 단마다 붙어 간다
   p.vy -= GRAV*dt;
   if (keys.Space && p.onGround && p.st === 0){ p.vy = JUMP; p.onGround = false; }
   p.y += p.vy*dt;
@@ -1812,7 +2442,7 @@ const gunLoot = (g) => ({ kind:LOOT.GUN, gun:g.gi, ld:g.ld });
 // e 의 발밑에 버린다 (조금 흩어서)
 function dropItemAt(e, it){
   const a = Math.random()*6.283, r = 0.5 + Math.random()*0.6;
-  return addLoot(it, e.x + Math.cos(a)*r, (e === me() ? e.y : heightAt(e.x, e.z)) + 0.35, e.z + Math.sin(a)*r);
+  return addLoot(it, e.x + Math.cos(a)*r, e.y + 0.35, e.z + Math.sin(a)*r);
 }
 const dropItem = (it) => dropItemAt(me(), it);
 // 핫바 칸 비우기 — 총은 가방으로, 회복템 바로가기는 그냥 뺀다
@@ -1921,7 +2551,7 @@ function deathBox(e){
   if (e.vest) items.push({ kind:LOOT.VEST, sub:e.vest, dur:e.vestD });
   if (e.bagLv) items.push({ kind:LOOT.BAG, sub:e.bagLv });
   if (!items.length) return;
-  addLoot({ kind:LOOT.BOX, name:e.name + ' 상자', items }, e.x, heightAt(e.x, e.z) + 0.45, e.z);
+  addLoot({ kind:LOOT.BOX, name:e.name + ' 상자', items }, e.x, e.y + 0.45, e.z);
 }
 function scanLoot(){
   const p = me();
@@ -2230,8 +2860,11 @@ function drawMap(){
   mapC.clearRect(0,0,S,S);
   mapC.fillStyle = '#121a16'; mapC.fillRect(0,0,S,S);
   const X = v => (v + HALF) * k, Z = v => (v + HALF) * k;
+  mapC.strokeStyle = 'rgba(80,140,190,.6)'; mapC.lineWidth = 2;   // 개울 · 도로 (초원)
+  for (const st of STREAMS){ mapC.beginPath(); st.forEach(([x, z], i) => i ? mapC.lineTo(X(x), Z(z)) : mapC.moveTo(X(x), Z(z))); mapC.stroke(); }
+  for (const r of ROADS){ mapC.strokeStyle = r.paved ? '#4a4f52' : '#4a3f30'; mapC.lineWidth = r.paved ? 2 : 1.5; mapC.beginPath(); mapC.moveTo(X(r.ax), Z(r.az)); mapC.lineTo(X(r.bx), Z(r.bz)); mapC.stroke(); }
   mapC.strokeStyle = '#2b3a33'; mapC.lineWidth = 1;
-  for (const h of houses){ mapC.strokeRect(X(h.x-h.w/2), Z(h.z-h.d/2), h.w*k, h.d*k); }
+  for (const h of houses){ mapC.strokeStyle = h.mansion ? '#6a6250' : '#2b3a33'; mapC.strokeRect(X(h.x-h.w/2), Z(h.z-h.d/2), h.w*k, h.d*k); }
   mapC.strokeStyle = 'rgba(90,180,255,.95)'; mapC.lineWidth = 2;
   mapC.beginPath(); mapC.arc(X(zone.cx), Z(zone.cz), zone.r*k, 0, 6.3); mapC.stroke();
   if (zone.phase < PHASES.length && !zone.moving){
@@ -2383,6 +3016,7 @@ function frame(now){
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - last)/1000);
   last = now;
+  if (!MAP){ renderHome(dt); return; }           // 맵을 고르기 전 — 홈 화면만
   if (playing && !over && matchState === 'drop'){
     updateDrop(dt);
     elapsed += dt;
@@ -2546,6 +3180,9 @@ async function initHome(){
   } else acct.guest = guestFlag() || !acct.online;
   acct.saved = { ...acct.avatar };
   showHome();
+  let again = false;
+  try { again = sessionStorage.getItem('ld_again') === '1'; sessionStorage.removeItem('ld_again'); } catch (e) {}
+  if (again && (acct.user || acct.guest)) openMapSel();   // [다시 한 판] 으로 새로 고쳤으면 바로 맵 선택
 }
 // 레벨 — 아직 레벨 체계가 없어 판수로 정한다 (5판마다 1, 30 문서 · 정현 확인)
 const levelOf = (st) => 1 + Math.floor(((st && st.games) || 0) / 5);
@@ -2912,9 +3549,12 @@ function updateMyView(dt){
   else if (endAt){ endAt = 0; veil.hidden = false; hudEl.hidden = true; }
 }
 
-function boot(){
-  buildTerrain();
+function boot(id){
+  MAP_ID = MAPS[id] ? id : 'desert'; MAP = MAPS[MAP_ID];
+  applyMapLook();
+  buildHeightGrid();                             // 지형 → 도로·개울·건물 터 고르기 → 지형 메시 순서
   buildProps();
+  buildTerrain();
   buildLoot();
   makeEnts();
   buildZone();
@@ -2934,21 +3574,70 @@ function boot(){
   resize();
   hudGun();
   myAvatar = new THREE.Mesh(avatarGeo(acct.avatar), BOT_MAT); myAvatar.visible = false; scene.add(myAvatar);
-  playBtn.disabled = false;
-  playBtn.textContent = '게임 시작';
-  requestAnimationFrame(frame);
 }
 function start(){
   audio();
   veil.hidden = true;
   hudEl.hidden = false;
-  if (over) { location.reload(); return; }     // 다음 판은 새 섬에서
+  if (over) { try { sessionStorage.setItem('ld_again', '1'); } catch (e) {} location.reload(); return; }   // 다음 판은 새 섬에서 — 새로 고친 뒤 맵 선택부터
   playing = true;
   matchBegin();                                  // 로그인이면 서버에서 매치 토큰 (29 문서)
   feed('<i>수송기 — Space 로 이탈한다</i>');
   lockMouse();
 }
-playBtn.addEventListener('click', (e) => { e.stopPropagation(); start(); });
+// ── 맵 선택 (lastdrop-07) — [게임 시작] → 사막 · 초원 카드 → 고른 맵으로 섬을 만들고 바로 수송기. 마지막 선택을 기억한다
+const mapSel = $id('mapSel');
+const lastMap = () => { try { const v = localStorage.getItem('ld_map'); return MAPS[v] ? v : null; } catch (e) { return null; } };
+function openMapSel(){
+  const last = lastMap();
+  mapSel.querySelectorAll('.mapc').forEach(c => {
+    const id = c.dataset.map;
+    c.querySelector('span').textContent = MAPS[id].desc;
+    c.querySelector('b i').textContent = id === last ? '지난번 선택' : '';
+    drawMapPreview(c.querySelector('canvas'), id);
+  });
+  mapSel.hidden = false;
+  (mapSel.querySelector('.mapc[data-map="' + (last || 'desert') + '"]')).focus();
+}
+mapSel.querySelectorAll('.mapc').forEach(c => c.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const id = c.dataset.map;
+  try { localStorage.setItem('ld_map', id); } catch (er) {}
+  mapSel.hidden = true; playBtn.disabled = true; playBtn.textContent = '섬 만드는 중…';
+  setTimeout(() => { boot(id); start(); }, 20);  // 버튼 글자가 먼저 보이게 한 틱 쉬고 만든다 (클릭 직후라 포인터 락도 된다)
+}));
+$id('mapBack').addEventListener('click', (e) => { e.stopPropagation(); mapSel.hidden = true; });
+// 카드 그림 — 2D 캔버스로 그 맵의 하늘 · 땅 · 건물 실루엣
+function drawMapPreview(cv, id){
+  const g = cv.getContext('2d'), W = cv.width, H = cv.height, M = MAPS[id], hex = (n) => '#' + n.toString(16).padStart(6, '0');
+  const sky = g.createLinearGradient(0, 0, 0, H * 0.7);
+  sky.addColorStop(0, hex(M.sky.hi)); sky.addColorStop(1, hex(M.sky.lo));
+  g.fillStyle = sky; g.fillRect(0, 0, W, H);
+  const hill = (y0, amp, f, ph, col) => { g.fillStyle = col; g.beginPath(); g.moveTo(0, H);
+    for (let x = 0; x <= W; x += 8) g.lineTo(x, y0 + Math.sin(x * f + ph) * amp + Math.sin(x * f * 2.7 + ph * 3) * amp * 0.35); g.lineTo(W, H); g.fill(); };
+  if (id === 'desert'){
+    g.fillStyle = '#ffd08a'; g.beginPath(); g.arc(W * 0.74, H * 0.5, 38, 0, 6.283); g.fill();
+    hill(H * 0.62, 14, 0.008, 1, '#b98a52'); hill(H * 0.72, 18, 0.006, 3, '#c79a5e'); hill(H * 0.84, 12, 0.01, 5, '#d4a96c');
+    g.fillStyle = '#b88a5e'; g.fillRect(W * 0.18, H * 0.56, 120, 64); g.fillStyle = '#c9a27a'; g.fillRect(W * 0.18 + 70, H * 0.48, 90, 72);
+    g.fillStyle = '#3a2a1c'; for (const [x, y] of [[W*0.18+18, H*0.56+22], [W*0.18+92, H*0.48+18], [W*0.18+128, H*0.48+18]]) g.fillRect(x, y, 16, 14);
+    g.fillStyle = '#4f6b30';
+    for (const [x, y, h] of [[W*0.6, H*0.86, 70], [W*0.86, H*0.8, 52], [W*0.08, H*0.9, 44]]){
+      g.fillRect(x, y - h, 12, h); g.fillRect(x + 12, y - h*0.6, 14, 8); g.fillRect(x + 20, y - h*0.85, 8, h*0.3); g.fillRect(x - 14, y - h*0.45, 14, 8); g.fillRect(x - 14, y - h*0.7, 8, h*0.3);
+    }
+  } else {
+    g.fillStyle = 'rgba(255,255,255,.85)'; for (const [x, y, r] of [[W*0.2, H*0.18, 26], [W*0.26, H*0.16, 34], [W*0.33, H*0.19, 24], [W*0.72, H*0.12, 22], [W*0.78, H*0.1, 30]]){ g.beginPath(); g.arc(x, y, r, 0, 6.283); g.fill(); }
+    hill(H * 0.58, 16, 0.007, 2, '#6f9a52'); hill(H * 0.7, 14, 0.009, 4, '#5f8f44'); hill(H * 0.82, 10, 0.012, 1, '#6aa04a');
+    g.fillStyle = '#6a6d70'; g.beginPath(); g.moveTo(W * 0.42, H); g.lineTo(W * 0.52, H * 0.7); g.lineTo(W * 0.56, H * 0.7); g.lineTo(W * 0.66, H); g.fill();
+    const bx = W * 0.62, by = H * 0.68;
+    g.fillStyle = '#e9e4d8'; g.fillRect(bx, by - 110, 150, 110); g.fillStyle = '#5a5650'; g.fillRect(bx - 4, by - 116, 158, 8);
+    g.fillStyle = '#3d4650'; for (let r = 0; r < 3; r++) for (let c = 0; c < 4; c++) g.fillRect(bx + 12 + c * 36, by - 98 + r * 34, 16, 16);
+    g.fillStyle = '#5a5650'; for (let c = 0; c < 10; c++) g.fillRect(bx + c * 16, by - 128, 3, 12); g.fillRect(bx, by - 128, 150, 3);
+    g.fillStyle = '#e0c9a6'; g.fillRect(W * 0.12, by - 46, 80, 46); g.fillStyle = '#9a3e2c'; g.fillRect(W * 0.12 - 6, by - 56, 92, 12); g.fillRect(W * 0.12 + 8, by - 64, 64, 10);
+    for (const [x, y, r] of [[W*0.04, H*0.76, 26], [W*0.36, H*0.74, 22], [W*0.92, H*0.78, 28]]){ g.fillStyle = '#5a4330'; g.fillRect(x - 3, y, 6, 30); g.fillStyle = '#3f6b2c'; g.beginPath(); g.arc(x, y, r, 0, 6.283); g.fill(); }
+  }
+}
+playBtn.addEventListener('click', (e) => { e.stopPropagation(); if (!MAP) openMapSel(); else start(); });
 // (예전엔 시작 화면 아무 데나 눌러도 시작했다 — 꾸미기 버튼과 겹쳐 [게임 시작] 으로만)
-boot();
+playBtn.disabled = false; playBtn.textContent = '게임 시작';
+requestAnimationFrame(frame);
 initHome();
