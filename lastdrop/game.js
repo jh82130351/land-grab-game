@@ -28,6 +28,13 @@ const HEALS = {
   drink: { n:'에너지드링크', t:3.0, boost:28 },
 };
 const HEAL_ORDER = ['band','kit','med','drink'];
+// 투척류 (lastdrop-09) — 가방에 쌓이고 핫바에 꽂아 손에 든다. w 한 개 무게 · fuse 손에서 놓은 뒤 터지기까지(초)
+const THROWS = {
+  gren:  { n:'수류탄', w:18, fuse:4, col:0x4a5a32 },
+  flash: { n:'섬광탄', w:15, fuse:2, col:0x9aa4ae },
+};
+const THR_ORDER = ['gren', 'flash'];
+const NADE = { g:14, r:0.09, rest:0.35, vmin:8, vmax:28, charge:1.5, boomR:8, boomDmg:120, flashR:10, flashMax:10, fade:1.5 };
 // 탄 — 예비탄은 가방에 종류별로 쌓인다. 같은 탄을 쓰는 총(권총·SMG)은 가방 9mm 를 같이 꺼내 쓴다 (lastdrop-04)
 //   w 한 발 무게 · pick 전리품 한 개에 든 양
 const AMMO = {
@@ -63,6 +70,7 @@ const tag = (e) => e.bot ? e.name + ' (' + TIERS[e.tier].n + ')' : e.name;
 const HOT_N = 5;
 const heldGun = (e) => { const s = e.hot[e.sel]; return s && s.t === 'gun' ? s.g : null; };
 const heldDef = (e) => { const h = heldGun(e); return h ? GUNS[h.gi] : null; };
+const heldThr = (e) => { const s = e.hot[e.sel]; return s && s.t === 'thr' && e.thr && e.thr[s.k] > 0 ? s.k : null; };   // 손에 든 투척류 (lastdrop-09)
 const allGuns = (e) => e.hot.filter(s => s && s.t === 'gun').map(s => s.g).concat(e.gb);
 const ammoOf = (e, h) => h.ld + e.bag[GUNS[h.gi].am];
 // 주먹 — 나·봇 공통. 총이 없을 때 최소 대응
@@ -1323,8 +1331,8 @@ function buildProps(){
 }
 
 // ══ 전리품 ════════════════════════════════════════════════════
-const LOOT = { GUN:0, AMMO:1, HEAL:2, HELM:3, VEST:4, BAG:5, BOX:6 };
-const LOOT_COL = [0xffb03a, 0x9fb4c8, 0x6adf8a, 0xc8a2ff, 0x7fd4ff, 0xd8c27a, 0x8a5a2e];
+const LOOT = { GUN:0, AMMO:1, HEAL:2, HELM:3, VEST:4, BAG:5, BOX:6, THR:7 };
+const LOOT_COL = [0xffb03a, 0x9fb4c8, 0x6adf8a, 0xc8a2ff, 0x7fd4ff, 0xd8c27a, 0x8a5a2e, 0x8fa04a];
 const LOOT_SPARE = 400;                    // 버린 물건·봇 상자가 들어갈 여유 칸
 const loots = [];
 let lootMesh = null;
@@ -1371,6 +1379,8 @@ function buildLoot(){
     else if (r < 0.86) it = { kind:LOOT.HELM, sub:lv(44) };
     else if (r < 0.94) it = { kind:LOOT.VEST, sub:lv(45) };
     else it = { kind:LOOT.BAG, sub:lv(47) };
+    // 투척류 (lastdrop-09) — 자리의 11% 를 바꾼다. 수류탄 흔함(3) : 섬광탄 보통(2), 1~2개
+    if (rh(i, 49, SEED) < 0.11) it = { kind:LOOT.THR, sub:rh(i, 50, SEED) < 0.6 ? 'gren' : 'flash', n:1 + (rh(i, 51, SEED) < 0.5 ? 1 : 0) };
     loots.push(Object.assign(it, { x:p[0], y:p[1], z:p[2], fl:p[4], taken:false }));
   });
   const geo = new THREE.BoxGeometry(0.44, 0.3, 0.7);
@@ -1516,6 +1526,7 @@ function makeEnts(){
       hot:[null,null,null,null,null], sel:0, gb:[],   // 핫바 5칸 · 가방 속 총
       bag:Object.fromEntries(AMMO_ORDER.map(k => [k, 0])), bagLv:0,   // 예비탄은 가방에 종류별로
       inv:{ band:2, kit:0, med:0, drink:0 }, healT:0, healKind:null, boost:0,
+      thr:{ gren:0, flash:0 }, blindT:0, blindS:0,   // 투척류 · 섬광 (lastdrop-09)
       helm:0, helmD:0, vest:0, vestD:0, st:0,
       cd:0, reload:0, burst:0, react:0, think:0, tx:0, tz:0, target:null,
       mesh:null, chute:null, kills:0,
@@ -1769,7 +1780,7 @@ function swimCheck(e){
   if (!hasWater()){ e.swim = false; return false; }
   const deep = MAP.water - heightAt(e.x, e.z) > SWIM_DEPTH;
   if (deep && e.y <= MAP.water - SWIM_Y + 0.25){
-    if (!e.swim && e === me()){ setScope(false); if (e.healT > 0){ e.healT = 0; e.healKind = null; } e.reload = 0; }
+    if (!e.swim && e === me()){ setScope(false); cancelCharge(); if (e.healT > 0){ e.healT = 0; e.healKind = null; } e.reload = 0; }
     e.swim = true; e.y = MAP.water - SWIM_Y; e.vy = 0; e.onGround = true; e.st = 0;
   } else e.swim = false;
   return e.swim;
@@ -2120,7 +2131,9 @@ function audio(){
   const C = window.AudioContext || window.webkitAudioContext;
   if (!C) return;
   try { AU.ctx = new C(); } catch(e){ return; }
-  AU.g = AU.ctx.createGain(); AU.g.gain.value = SET.sound ? 0.55 : 0; AU.g.connect(AU.ctx.destination);
+  AU.g = AU.ctx.createGain(); AU.g.gain.value = SET.sound ? 0.55 : 0;
+  AU.lp = AU.ctx.createBiquadFilter(); AU.lp.type = 'lowpass'; AU.lp.frequency.value = 20000;   // 섬광 — 귀 먹먹 (lastdrop-09)
+  AU.g.connect(AU.lp); AU.lp.connect(AU.ctx.destination);
   const n = AU.ctx.sampleRate * 0.5;
   AU.noise = AU.ctx.createBuffer(1, n, AU.ctx.sampleRate);
   const d = AU.noise.getChannelData(0);
@@ -2395,6 +2408,7 @@ function myShoot(){                             // 쐈으면(주먹 포함) true
   if (p.cd > 0 || p.reload > 0 || p.healT > 0) return false;
   if (p.drop !== 'ground' || riding || p.swim) return false;   // 수영 중엔 못 쏜다 (lastdrop-10)
   const h = heldGun(p);
+  if (heldThr(p)) return false;                  // 투척류는 꾹 눌러 던진다 (lastdrop-09)
   cam.getWorldDirection(_fd);
   if (!h){ punch(p, _fd.x, _fd.y, _fd.z); return true; }   // 맨손 — 주먹
   if (h.ld <= 0){ startReload(); fireQ = -1e9; return false; }
@@ -2448,7 +2462,7 @@ function cycleSlot(dir){                         // 휠 — 총이 든 칸만 �
   }
 }
 function afterHeld(){                            // 손에 든 게 바뀌었다
-  const p = me(); p.reload = 0; p.bn = 0; setScope(false); buildView();
+  const p = me(); p.reload = 0; p.bn = 0; setScope(false); cancelCharge(); buildView();
 }
 function setScope(on){
   const p = me(), hg = heldGun(p);
@@ -2461,6 +2475,177 @@ function setScope(on){
   scopeEl.style.display = (scoped && sn) ? 'block' : 'none';
   crossEl.style.visibility = (scoped && sn) ? 'hidden' : '';   // 저격 배율에선 조준경 십자선만
   if (viewGun) viewGun.visible = !(scoped && sn);
+}
+
+// ══ 투척류 (lastdrop-09) ══════════════════════════════════════
+// 조준점·궤적·낙하지점 표시는 없다. 왼쪽을 꾹 누른 시간 0~1.5초 → 8~28m/s, 바라보는 방향으로. 화면 아래엔 세기 막대만.
+// 포물선(중력 14) · 벽·바닥에 튕김(반발 0.35, 접선 마찰) · 굴러 멈춤. 수류탄 4초 · 섬광탄 2초 뒤 (손에서 놓은 때부터).
+const charge = { on:false, t:0 };
+const powEl = document.getElementById('pow'), flashEl = document.getElementById('flash');
+const nades = [];
+const NADE_GEO = new THREE.SphereGeometry(NADE.r * 1.2, 8, 6);
+const NADE_MAT = { gren:new THREE.MeshStandardMaterial({ color:THROWS.gren.col, roughness:0.6 }), flash:new THREE.MeshStandardMaterial({ color:THROWS.flash.col, roughness:0.4 }) };
+let nadeThrows = 0, nadeBooms = 0, flashBangs = 0, botNades = 0, botFlashes = 0;
+function startCharge(){
+  const p = me();
+  if (!heldThr(p) || p.drop !== 'ground' || riding || p.healT > 0) return;
+  if (p.swim){ why('수영 중 — 던질 수 없다'); return; }
+  charge.on = true; charge.t = 0;
+}
+function cancelCharge(){ charge.on = false; charge.t = 0; if (powEl) powEl.hidden = true; }
+const throwSpeed = (t) => NADE.vmin + (NADE.vmax - NADE.vmin) * Math.min(1, t / NADE.charge);
+function releaseThrow(){
+  const p = me(), k = heldThr(p);
+  const t = charge.t; cancelCharge();
+  if (!k || p.swim || p.drop !== 'ground' || riding) return;
+  cam.getWorldDirection(_fd);
+  const v = throwSpeed(t);
+  spawnNade(p, k, yawO.position.x + _fd.x*0.5, yawO.position.y + _fd.y*0.5 - 0.1, yawO.position.z + _fd.z*0.5, _fd.x*v, _fd.y*v, _fd.z*v);
+  p.thr[k]--; tidyHot(p); hudGun(); sTake();
+}
+function spawnNade(e, k, x, y, z, vx, vy, vz){
+  const mesh = new THREE.Mesh(NADE_GEO, NADE_MAT[k]); mesh.position.set(x, y, z); scene.add(mesh);
+  const n = { k, x, y, z, vx, vy, vz, t:THROWS[k].fuse, by:e, mesh, rest:false, ground:false, x0:x, z0:z, born:elapsed };
+  nades.push(n); nadeThrows++;
+  return n;
+}
+function nadeBounce(n, nx, ny, nz){
+  const vn = n.vx*nx + n.vy*ny + n.vz*nz;
+  if (vn >= 0) return;
+  const tx = n.vx - vn*nx, ty = n.vy - vn*ny, tz = n.vz - vn*nz, fr = ny > 0.6 ? 0.8 : 0.9;   // 접선은 마찰, 법선은 반발 0.35
+  n.vx = tx*fr - vn*NADE.rest*nx; n.vy = ty*fr - vn*NADE.rest*ny; n.vz = tz*fr - vn*NADE.rest*nz;
+  if (ny > 0.6) n.ground = true;
+  if (-vn > 2.5 && Math.hypot(n.x - me().x, n.z - me().z) < 40) tone(1800, 1300, 0.05 * Math.min(1, -vn / 10), 0.05, 'square');
+}
+function updateNades(dt){
+  for (let i = nades.length - 1; i >= 0; i--){
+    const n = nades[i];
+    n.t -= dt;
+    if (!n.rest){
+      n.ground = false;
+      const ST = 4, h = dt / ST, R = NADE.r;
+      for (let s = 0; s < ST; s++){
+        n.vy -= NADE.g * h;
+        if (hasWater() && n.y < MAP.water){ n.vx *= 0.92; n.vz *= 0.92; n.vy = Math.max(n.vy * 0.92, -2); }   // 물속 — 느려진다
+        const px = n.x, py = n.y, pz = n.z;
+        n.x += n.vx*h; n.y += n.vy*h; n.z += n.vz*h;
+        const c = eachColNear(n.x, n.z, R, (c) => n.x > c.x - c.hw - R && n.x < c.x + c.hw + R && n.z > c.z - c.hd - R && n.z < c.z + c.hd + R && n.y > c.y0 - R && n.y < c.y1 + R);
+        if (c){                                    // 상자 — 지난 자리가 바깥이던 축의 면으로 튕긴다
+          if (py >= c.y1 + R - 1e-3){ n.y = c.y1 + R; nadeBounce(n, 0, 1, 0); }
+          else if (py <= c.y0 - R + 1e-3){ n.y = c.y0 - R; nadeBounce(n, 0, -1, 0); }
+          else if (px <= c.x - c.hw - R + 1e-3 || px >= c.x + c.hw + R - 1e-3){ n.x = px; nadeBounce(n, px < c.x ? -1 : 1, 0, 0); }
+          else { n.z = pz; nadeBounce(n, 0, 0, pz < c.z ? -1 : 1); }
+        }
+        const g = heightAt(n.x, n.z);
+        if (n.y < g + R){                          // 땅 — 경사 법선으로 튕긴다
+          n.y = g + R;
+          const gx = (heightAt(n.x + 0.5, n.z) - heightAt(n.x - 0.5, n.z)), gz = (heightAt(n.x, n.z + 0.5) - heightAt(n.x, n.z - 0.5)), L = Math.hypot(gx, 1, gz);
+          nadeBounce(n, -gx / L, 1 / L, -gz / L);
+        }
+      }
+      if (n.ground){ n.vx *= Math.max(0, 1 - 2.2*dt); n.vz *= Math.max(0, 1 - 2.2*dt); }   // 굴러가다 멈춘다
+      if (n.ground && Math.hypot(n.vx, n.vy, n.vz) < 0.3){ n.vx = n.vy = n.vz = 0; n.rest = true; n.restAt = elapsed; }
+      n.mesh.position.set(n.x, n.y, n.z);
+      n.mesh.rotation.x += Math.hypot(n.vx, n.vz) * dt * 3;
+    }
+    if (n.t <= 0){
+      nades.splice(i, 1); scene.remove(n.mesh);
+      if (n.k === 'gren') grenadeBoom(n); else flashBang(n);
+    }
+  }
+}
+// 사이에 벽·지붕·땅이 있나 (터진 곳 0.25m 위 → 목표점)
+function clearLine(ax, ay, az, bx, by, bz){
+  const dx = bx - ax, dy = by - ay, dz = bz - az, L = Math.hypot(dx, dy, dz);
+  if (L < 0.05) return true;
+  return rayWorld(ax, ay, az, dx/L, dy/L, dz/L, L) >= L - 0.15;
+}
+// 거리 = 터진 곳에서 몸(발~머리 선분)의 가장 가까운 점까지 — 발밑에서 터지면 0m
+function bodyDist(e, ox, oy, oz){
+  const top = e.y + (e.swim ? SWIM_Y + 0.25 : 1.7 * STANCE[e.st].h), cy = Math.max(e.y, Math.min(top, oy));
+  return Math.hypot(e.x - ox, cy - oy, e.z - oz);
+}
+// 수류탄 — 반경 8m, 가운데 120 → 8m 에서 0 (선형). 방탄복 적용(몸통 부위로), 몸 가운데까지 벽·지붕에 막히면 0
+const BOOM_PART = { y0:0, y1:0, r:0, m:1, t:'' };
+function grenadeBoom(n){
+  nadeBooms++;
+  const ox = n.x, oy = n.y + 0.25, oz = n.z;
+  for (let k = 0; k < 10; k++) fx(ox + (Math.random() - 0.5) * 2, oy + Math.random() * 2, oz + (Math.random() - 0.5) * 2, 1.2 + Math.random(), 0.5, false);
+  const dme = Math.hypot(ox - me().x, oy - me().y - 1, oz - me().z);
+  sBoom(dme);
+  if (dme < 22){ const k = (1 - dme / 22) * 0.05; kickP += k; kickY += (Math.random() - 0.5) * k; pitO.rotation.x += k; shakeT = Math.max(shakeT, 0.6 * (1 - dme / 22)); }   // 가까우면 화면이 흔들린다
+  n.hits = [];
+  for (const e of ents){
+    if (!e.alive || e.drop === 'plane') continue;
+    const cy = e.y + 1.0 * STANCE[e.st].h, d = bodyDist(e, ox, oy, oz);
+    if (d >= NADE.boomR) continue;
+    if (!clearLine(ox, oy, oz, e.x, cy, e.z)){ n.hits.push({ e, d, dmg:0, blocked:true }); continue; }
+    const dmg = NADE.boomDmg * (1 - d / NADE.boomR), hp0 = e.hp;
+    hurt(e, dmg, n.by, BOOM_PART, '수류탄');
+    n.hits.push({ e, d, dmg, dealt:hp0 - e.hp });
+  }
+  for (const c of cars){
+    if (c.dead) continue;
+    const d = Math.hypot(c.x - ox, c.y + 1 - oy, c.z - oz);
+    if (d < NADE.boomR && clearLine(ox, oy, oz, c.x, c.y + 1.2, c.z)) damageCar(c, NADE.boomDmg * (1 - d / NADE.boomR), n.by);
+  }
+  lastBoom = n;
+}
+// 섬광탄 — 반경 10m, 사이에 벽이 없을 때만. 세기 = 10 × (1 − 거리/10). 방향 무관
+function flashBang(n){
+  flashBangs++;
+  const ox = n.x, oy = n.y + 0.25, oz = n.z;
+  fx(ox, oy, oz, 3, 0.15, false);
+  const dme = Math.hypot(ox - me().x, oy - me().y - 1, oz - me().z);
+  if (dme < 80){ nz(2600, 0.7, 0.35 * Math.max(0.2, 1 - dme / 80), 0.25, 'bandpass', 1.3); tone(320, 90, 0.25 * Math.max(0.2, 1 - dme / 80), 0.3, 'square'); }
+  n.hits = [];
+  for (const e of ents){
+    if (!e.alive || e.drop === 'plane') continue;
+    const ey = e.y + eyeH(e), d = bodyDist(e, ox, oy, oz);
+    if (d >= NADE.flashR) continue;
+    if (!clearLine(ox, oy, oz, e.x, ey, e.z)){ n.hits.push({ e, d, s:0, blocked:true }); continue; }
+    const s = NADE.flashMax * (1 - d / NADE.flashR);
+    n.hits.push({ e, d, s });
+    if (s > e.blindT){ e.blindT = s; e.blindS = s; }
+    if (e.bot){ e.target = null; e.react = Math.max(e.react || 0, 0); }
+    else ringEars(s);
+  }
+  lastFlash = n;
+}
+let lastBoom = null, lastFlash = null, shakeT = 0;
+// 귀 울림 — 같은 비율로 소리 먹먹(저역통과) + 삐 소리, 섬광 시간 동안 걷힌다
+function ringEars(s){
+  if (!AU.ctx || !AU.lp || !SET.sound) return;
+  const c = AU.ctx, t = c.currentTime, k = s / NADE.flashMax;
+  const o = c.createOscillator(), g = c.createGain(); o.type = 'sine'; o.frequency.value = 3600;
+  g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.09 * k, t + 0.05); g.gain.linearRampToValueAtTime(0.0001, t + s);
+  o.connect(g); g.connect(AU.ctx.destination); o.start(t); o.stop(t + s + 0.1);
+}
+function updateThrowFx(dt){
+  const p = me();
+  if (charge.on){                                // 세기 막대만 (궤적 정보 아님)
+    charge.t += dt;
+    if (!heldThr(p) || p.swim){ cancelCharge(); }
+    else if (powEl){ powEl.hidden = false; powEl.firstElementChild.style.width = Math.round(Math.min(1, charge.t / NADE.charge) * 100) + '%'; }
+  }
+  for (const e of ents) if (e.blindT > 0) e.blindT = Math.max(0, e.blindT - dt);
+  const op = p.blindT > 0 ? (p.blindS / NADE.flashMax) * Math.min(1, p.blindT / NADE.fade) : 0;   // 흰 덮개 = 세기/10, 끝 1.5초 동안 걷힌다
+  if (flashEl) flashEl.style.opacity = op.toFixed(3);
+  if (AU.lp) AU.lp.frequency.value = p.blindT > 0 ? 400 + 19600 * (1 - op) : 20000;
+  if (shakeT > 0){ shakeT -= dt; const k = shakeT * 0.02; pitO.rotation.x += (Math.random() - 0.5) * k; yawO.rotation.y += (Math.random() - 0.5) * k; }
+}
+// 봇 투척 — 목표점에 닿는 속도를 각도 후보 순서대로 풀고(문 안으로는 낮게 15°→30°, 엄폐 너머로는 높게 45°→30°) 난이도만큼 흔든다
+function botThrow(b, k, tx, ty, tz, angles){
+  const ox = b.x, oy = b.y + 1.5 * STANCE[b.st].h, oz = b.z, dx = tx - ox, dz = tz - oz, d = Math.hypot(dx, dz), dy = ty - oy;
+  let v = 0, th = 0;
+  for (const a of angles || [0.52, 0.79]){ const den = 2 * Math.cos(a) ** 2 * (d * Math.tan(a) - dy); if (den > 0){ v = Math.sqrt(NADE.g * d * d / den); th = a; if (v <= NADE.vmax) break; } }
+  if (!v) return false;
+  v = Math.min(NADE.vmax, Math.max(NADE.vmin, v)) * (1 + (Math.random() - 0.5) * TIERS[b.tier].aim * 4);
+  const yaw = Math.atan2(dx, dz) + (Math.random() - 0.5) * TIERS[b.tier].aim * 3;
+  spawnNade(b, k, ox, oy, oz, Math.sin(yaw) * Math.cos(th) * v, Math.sin(th) * v, Math.cos(yaw) * Math.cos(th) * v);
+  b.thr[k]--; b.cd = Math.max(b.cd, 0.8);
+  if (k === 'gren') botNades++; else botFlashes++;
+  return true;
 }
 
 // ══ 1인칭 총 ══════════════════════════════════════════════════
@@ -2511,6 +2696,17 @@ function gunGeo(g){
 }
 function buildView(){
   if (viewGun){ cam.remove(viewGun); viewGun.geometry.dispose(); viewGun = null; }
+  const tk = heldThr(me());
+  if (tk){                                       // 투척류 — 손에 든 작은 통 (lastdrop-09)
+    const ps = [], m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
+    const put = (x,y,z,w,h,d,c,g) => { m.compose(new THREE.Vector3(x,y,z), q, sc.set(w,h,d)); ps.push({ g:g || BOX, m:m.clone(), c }); };
+    if (tk === 'gren'){ put(0, 0, 0, 0.055, 0.07, 0.055, THROWS.gren.col, SPH); put(0, 0.075, 0, 0.025, 0.03, 0.025, 0x2a2e30); put(0.03, 0.07, 0, 0.012, 0.06, 0.03, 0x8a8a80); }
+    else { put(0, 0, 0, 0.04, 0.12, 0.04, THROWS.flash.col, CYL); put(0, 0.075, 0, 0.025, 0.03, 0.025, 0x2a2e30); put(0.03, 0.07, 0, 0.012, 0.06, 0.03, 0x8a8a80); }
+    viewGun = new THREE.Mesh(merge(ps), VIEW_MAT);
+    viewGun.position.set(0.2, -0.2, -0.38);
+    cam.add(viewGun);
+    return;
+  }
   const hg = heldGun(me());
   if (!hg) return;
   viewGun = new THREE.Mesh(gunGeo(GUNS[hg.gi]), VIEW_MAT);
@@ -2535,6 +2731,7 @@ function handGun(e){
 // ══ 봇 ════════════════════════════════════════════════════════
 function botThink(b){
   b.think = 0.35 + Math.random()*0.4;
+  if (b.blindT > 0){ b.target = null; return; }   // 섬광 — 시야 0, 표적 탐색 안 함 (lastdrop-09)
   const T = TIERS[b.tier];
   let best = null, bd = 1e9;
   for (const o of ents){
@@ -2549,6 +2746,7 @@ function botThink(b){
     rollAim(b);
   }
   b.target = best;
+  if (best) b.seen = { e:best, t:elapsed };     // 마지막으로 본 적 — 엄폐하면 수류탄 (lastdrop-09)
   if (!best){                                  // 적이 안 보이면 자기장 안쪽으로
     const d = Math.hypot(b.x-zone.cx, b.z-zone.cz);
     // 산지 — 다음 자기장이 강 건너면 미리 건너간다 (다리로, 멀면 헤엄). 목표를 멀리 한 번 잡아 길을 한 번만 만든다 (lastdrop-10)
@@ -2669,6 +2867,7 @@ function lootWant(b, it){                        // 이게 얼마나 필요한�
       const k = HEAL_ORDER[it.sub], lim = { band:5, kit:2, med:1, drink:2 }[k];
       return room >= HEAL_W[k] && b.inv[k] < lim ? 15 + it.sub : 0;
     }
+    case LOOT.THR: return up && b.thr[it.sub] < 2 && room >= THROWS[it.sub].w ? 20 : 0;   // 어려움 이상만 쓴다 (lastdrop-09)
     case LOOT.BOX: return Math.max(0, ...it.items.map(x => lootWant(b, x)));
   }
   return 0;
@@ -2930,6 +3129,7 @@ function updateBot(b, dt){
   b.think -= dt;
   if (b.think <= 0) botThink(b);
   if (b.cd > 0) b.cd -= dt;
+  if (b.tier >= 4 && !b.swim && !(b.blindT > 0)) botThrowThink(b, dt);   // 어려움 이상 — 수류탄·섬광탄 (lastdrop-09)
   const armed = botArmed(b);                     // 총 + 탄 30발 이상이어야 싸운다
   const h = armed ? holdBest(b) : null, g = h ? GUNS[h.gi] : null;
   if (b.reload > 0){                             // 재장전은 가방의 그 탄에서 (무한 탄 없음)
@@ -2979,7 +3179,7 @@ function updateBot(b, dt){
     if (rz){ mx = rz.mx; mz = rz.mz; run = rz.run; }
     // 사격
     if (b.react > 0) b.react -= dt;
-    if (g && !b.swim && b.react <= 0 && b.cd <= 0 && b.reload <= 0 && d < g.range*1.1 && canSee(b, b.target)){   // 수영 중엔 안 쏜다
+    if (g && !b.swim && !(b.blindT > 0) && b.react <= 0 && b.cd <= 0 && b.reload <= 0 && d < g.range*1.1 && canSee(b, b.target)){   // 수영 중엔 안 쏜다
       if (h.ld <= 0){
         if (b.bag[g.am] > 0) b.reload = g.reload;   // 가방에도 없으면 다음 프레임에 다른 총으로 바꾼다
         b.bn = 0;
@@ -3033,6 +3233,11 @@ function updateBot(b, dt){
       }
     }
   }
+  if (b.blindT > 0){                             // 섬광 — 세기에 비례해 무작위로 비틀거린다 (lastdrop-09)
+    if ((b.blindDirT = (b.blindDirT || 0) - dt) <= 0){ b.blindDirT = 0.4 + Math.random() * 0.6; b.blindA = Math.random() * 6.283; }
+    const k = Math.min(1, b.blindS / NADE.flashMax);
+    mx = Math.sin(b.blindA) * k; mz = Math.cos(b.blindA) * k; run = false; b.target = null;
+  }
   const ml = Math.hypot(mx, mz); if (ml > 1){ mx /= ml; mz /= ml; }
   const sp = b.swim ? SWIM_SPD * dt : (run ? 7.4 : 4.3) * dt * (heldDef(b)?.spd || 1);   // 경기관총은 봇도 느리다 · 수영 2.7m/s
   if (b.detourT > 0){                          // 우회 중 — 정한 방향으로 잠깐 돌아간다
@@ -3050,6 +3255,28 @@ function updateBot(b, dt){
   botFloor(b, ox, oy, oz);                       // 나와 같은 바닥 판정 — 층 바닥·계단·지붕 (lastdrop-07) · 끼면 밀어내기 (07-c)
   if (!swimCheck(b)) slideStep(b, dt);           // 물 · 가파른 비탈 (lastdrop-10)
   botStairWatch(b, dt);
+}
+// 봇 투척 판단 (어려움 이상) — ① 최근 4초 안에 본 적이 지금 엄폐 뒤(안 보임) 8~35m → 수류탄
+// ② 집 문 9m 안 바깥에 있고 그 집 안에 적이 있으면 → 문 안쪽 3m 로 섬광탄 (방 진입 전)
+let botFlashTries = 0;
+function botThrowThink(b, dt){
+  b.nadeCD = (b.nadeCD || 0) - dt;
+  if (b.nadeCD > 0 || b.cd > 0.5) return;
+  const sn = b.seen;
+  if (b.thr.gren > 0 && sn && sn.e.alive && elapsed - sn.t < 4 && !b.target){
+    const d = Math.hypot(sn.e.x - b.x, sn.e.z - b.z);
+    if (d > 8 && d < 35 && !canSee(b, sn.e) && botThrow(b, 'gren', sn.e.x, sn.e.y + 0.3, sn.e.z, [0.79, 0.52])){ b.nadeCD = 9; b.seen = null; return; }
+  }
+  if (b.thr.flash > 0 && !locate(b.x, b.y, b.z)){
+    for (const h of houses){
+      const out = h.nodes[h.out], door = h.nodes[h.out + 1];
+      if (Math.hypot(out.x - b.x, out.z - b.z) > 9) continue;
+      const foe = ents.find(o => o !== b && o.alive && o.drop === 'ground' && (() => { const l = locate(o.x, o.y, o.z); return l && l.h === h; })());
+      if (!foe) continue;
+      botFlashTries++;
+      if (botThrow(b, 'flash', door.x, door.y + 0.4, door.z - 3, [0.26, 0.52])){ b.nadeCD = 12; return; }
+    }
+  }
 }
 function botDetour(b, a){
   if (blocked(b.x, b.y, b.z, BODY_R)){         // 벽 속에 내렸으면 가까운 빈 자리로 빼 준다
@@ -3193,6 +3420,7 @@ function bagW(p){
   let w = 0;
   for (const k of AMMO_ORDER) w += p.bag[k] * AMMO[k].w;
   for (const k of HEAL_ORDER) w += p.inv[k] * HEAL_W[k];
+  for (const k of THR_ORDER) w += (p.thr ? p.thr[k] : 0) * THROWS[k].w;
   return w;
 }
 function itemName(it){
@@ -3204,6 +3432,7 @@ function itemName(it){
     case LOOT.VEST: return '방탄복 Lv' + it.sub;
     case LOOT.BAG:  return '가방 Lv' + it.sub;
     case LOOT.BOX:  return it.name;
+    case LOOT.THR:  return THROWS[it.sub].n + (it.n > 1 ? ' ×' + it.n : '');
   }
   return '?';
 }
@@ -3236,14 +3465,14 @@ function addGun(e, g, slot){
   return slot;
 }
 // 회복템 바로가기가 가리키는 게 다 떨어지면 칸을 비운다
-function tidyHot(e){ e.hot.forEach((x, i) => { if (x && x.t === 'heal' && e.inv[x.k] <= 0) e.hot[i] = null; }); }
+function tidyHot(e){ e.hot.forEach((x, i) => { if (x && ((x.t === 'heal' && e.inv[x.k] <= 0) || (x.t === 'thr' && e.thr[x.k] <= 0))){ e.hot[i] = null; if (e === me() && i === e.sel) afterHeld(); } }); }
 // 하나 줍기 (나·봇 공통). dest: undefined 자동 · 'bag' · { hot:s }
 // null = 다 주웠다 · 'part' = 일부만 (가방이 참) · 그 밖의 글자 = 못 줍는 이유
 function takeItem(e, it, dest){
   const room = bagCap(e) - bagW(e) + 1e-9, mine = e === me();
   const say = (h) => { if (mine) feed(h); };
   const hot = dest && dest.hot !== undefined ? dest.hot : undefined;
-  if (hot !== undefined && it.kind !== LOOT.GUN && it.kind !== LOOT.HEAL) return '핫바엔 총·회복템만 꽂는다';
+  if (hot !== undefined && it.kind !== LOOT.GUN && it.kind !== LOOT.HEAL && it.kind !== LOOT.THR) return '핫바엔 총·회복템·투척류만 꽂는다';
   switch (it.kind){
     case LOOT.GUN: {
       const g = { gi:it.gun, ld:it.ld };
@@ -3262,6 +3491,14 @@ function takeItem(e, it, dest){
       if (t <= 0) return '가방이 가득 찼다 — ' + HEALS[k].n + ' ' + HEAL_W[k] + ' 필요';
       e.inv[k] += t; it.n = n - t; say('<i>획득</i> ' + HEALS[k].n + (t > 1 ? ' ×' + t : ''));
       if (hot !== undefined){ putOut(e, hot); e.hot[hot] = { t:'heal', k }; }
+      return it.n > 0 ? 'part' : null;
+    }
+    case LOOT.THR: {                              // 투척류 — 처음 줍는 종류면 빈 핫바 칸에 꽂는다 (나만)
+      const k = it.sub, n = it.n || 1, t = Math.min(n, Math.floor(room / THROWS[k].w));
+      if (t <= 0) return '가방이 가득 찼다 — ' + THROWS[k].n + ' ' + THROWS[k].w + ' 필요';
+      e.thr[k] += t; it.n = n - t; say('<i>획득</i> ' + THROWS[k].n + (t > 1 ? ' ×' + t : ''));
+      if (hot !== undefined){ putOut(e, hot); e.hot[hot] = { t:'thr', k }; }
+      else if (mine && !e.hot.some(x => x && x.t === 'thr' && x.k === k)){ const f = e.hot.findIndex(x => !x); if (f >= 0) e.hot[f] = { t:'thr', k }; }
       return it.n > 0 ? 'part' : null;
     }
     case LOOT.HELM:
@@ -3316,6 +3553,7 @@ function deathBox(e){
   const items = allGuns(e).map(gunLoot);
   for (const k of AMMO_ORDER) if (e.bag[k] > 0) items.push({ kind:LOOT.AMMO, am:k, n:e.bag[k] });
   HEAL_ORDER.forEach((k, sub) => { if (e.inv[k] > 0) items.push({ kind:LOOT.HEAL, sub, n:e.inv[k] }); });
+  for (const k of THR_ORDER) if (e.thr[k] > 0) items.push({ kind:LOOT.THR, sub:k, n:e.thr[k] });
   if (e.helm) items.push({ kind:LOOT.HELM, sub:e.helm, dur:e.helmD });
   if (e.vest) items.push({ kind:LOOT.VEST, sub:e.vest, dur:e.vestD });
   if (e.bagLv) items.push({ kind:LOOT.BAG, sub:e.bagLv });
@@ -3459,6 +3697,9 @@ function moveItem(src, dest){
   } else if (src.bagHeal !== undefined){
     if (dest === 'ground') dropHeal(src.bagHeal, p.inv[src.bagHeal]);
     else if (dest.hot !== undefined){ putOut(p, dest.hot); p.hot[dest.hot] = { t:'heal', k:src.bagHeal }; }
+  } else if (src.bagThr !== undefined){
+    if (dest === 'ground') dropThr(src.bagThr, p.thr[src.bagThr]);
+    else if (dest.hot !== undefined){ putOut(p, dest.hot); p.hot[dest.hot] = { t:'thr', k:src.bagThr }; if (dest.hot === p.sel) afterHeld(); }
   } else if (src.bagAmmo !== undefined){
     if (dest === 'ground') dropAmmo(src.bagAmmo, p.bag[src.bagAmmo]);
     else if (dest.hot !== undefined) why('핫바엔 총·회복템만 꽂는다');
@@ -3477,6 +3718,11 @@ function dropAmmo(k, n){
   const p = me(); n = Math.min(n, p.bag[k]); if (n <= 0) return;
   p.bag[k] -= n; dropItem({ kind:LOOT.AMMO, am:k, n }); feed('<i>버림</i> ' + AMMO[k].n + ' ' + n + '발');
   hudGun();
+}
+function dropThr(k, n){
+  const p = me(); n = Math.min(n, p.thr[k]); if (n <= 0) return;
+  p.thr[k] -= n; dropItem({ kind:LOOT.THR, sub:k, n }); feed('<i>버림</i> ' + THROWS[k].n + (n > 1 ? ' ×' + n : ''));
+  tidyHot(p); hudGun();
 }
 function dropHeal(k, n){
   const p = me(); n = Math.min(n, p.inv[k]); if (n <= 0) return;
@@ -3504,7 +3750,7 @@ function renderInv(){
   const near = [];
   loots.forEach((l, i) => {
     if (l.taken || Math.hypot(l.x-p.x, l.z-p.z) > 3 || Math.abs(l.y-p.y) > 2.5) return;
-    const opts = (it, src) => (it.kind === LOOT.GUN || it.kind === LOOT.HEAL ? hotOpts(src) : []).concat([['가방에 넣기', () => moveItem(src, 'bag')]]);
+    const opts = (it, src) => (it.kind === LOOT.GUN || it.kind === LOOT.HEAL || it.kind === LOOT.THR ? hotOpts(src) : []).concat([['가방에 넣기', () => moveItem(src, 'bag')]]);
     if (l.kind === LOOT.BOX){
       near.push(el('div', 'grp', l.name));
       l.items.forEach((it, j) => { const src = { near:i, j }; near.push(row(itemName(it), null, src, () => takeFromBox(i, j), (e) => menu(e, opts(it, src)))); });
@@ -3523,6 +3769,11 @@ function renderInv(){
     bag.push(row(HEALS[k].n + ' ×' + n, '클릭 사용 · ' + n * HEAL_W[k], { bagHeal:k }, () => heal(k),
       (e) => menu(e, hotOpts({ bagHeal:k }).concat([['전부 버리기 (' + n + ')', () => dropHeal(k, n)], ['절반 버리기 (' + half(n) + ')', () => dropHeal(k, half(n))]]))));
   }
+  for (const k of THR_ORDER) if (p.thr[k] > 0){
+    const n = p.thr[k];
+    bag.push(row(THROWS[k].n + ' ×' + n, '클릭 핫바에 · ' + n * THROWS[k].w, { bagThr:k }, () => moveItem({ bagThr:k }, { hot:firstFree(p) }),
+      (e) => menu(e, hotOpts({ bagThr:k }).concat([['전부 버리기 (' + n + ')', () => dropThr(k, n)], ['하나 버리기', () => dropThr(k, 1)]]))));
+  }
   p.gb.forEach((g, j) => {
     const src = { bagGun:j };
     bag.push(row(GUNS[g.gi].n, g.ld + '발 · ' + AMMO[GUNS[g.gi].am].n + ' · 무게 0', src, () => moveItem(src, { hot:firstFree(p) }),
@@ -3533,8 +3784,8 @@ function renderInv(){
   const eq = [el('div', 'grp', '핫바 — 1~5 · 휠')];
   p.hot.forEach((it, s) => {
     const src = it ? { hot:s } : null;
-    const text = (s+1) + '  ' + (!it ? '빈 칸' : it.t === 'gun' ? GUNS[it.g.gi].n : HEALS[it.k].n + ' ×' + p.inv[it.k]);
-    const sub = !it ? (s === p.sel ? '손에 (맨손)' : null) : it.t === 'gun' ? it.g.ld + '발 · ' + AMMO[GUNS[it.g.gi].am].n + (s === p.sel ? ' · 손에' : '') : '바로가기';
+    const text = (s+1) + '  ' + (!it ? '빈 칸' : it.t === 'gun' ? GUNS[it.g.gi].n : it.t === 'thr' ? THROWS[it.k].n + ' ×' + p.thr[it.k] : HEALS[it.k].n + ' ×' + p.inv[it.k]);
+    const sub = !it ? (s === p.sel ? '손에 (맨손)' : null) : it.t === 'gun' ? it.g.ld + '발 · ' + AMMO[GUNS[it.g.gi].am].n + (s === p.sel ? ' · 손에' : '') : it.t === 'thr' ? (s === p.sel ? '손에' : '투척') : '바로가기';
     const r = row(text, sub, src, it ? () => selectSlot(s) : null,
       it ? (e) => menu(e, [['가방에 넣기', () => moveItem(src, 'bag')]].concat(it.t === 'gun' ? [['버리기', () => moveItem(src, 'ground')]] : [])) : null);
     r.dataset.drop = 'hot' + s; r.classList.add('slot'); if (s === p.sel) r.classList.add('sel');
@@ -3606,11 +3857,12 @@ function feed(html){
 function hudGun(){
   const p = me(), h = heldGun(p);
   const g = h ? GUNS[h.gi] : null;
-  gunN.textContent = g ? g.n : '맨손 (주먹)';
-  gunA.innerHTML = g ? (h.ld + ' <s>/ ' + AMMO[g.am].n + ' ' + p.bag[g.am] + '</s>') : '— <s>/ —</s>';
+  const tk = heldThr(p);
+  gunN.textContent = tk ? THROWS[tk].n : g ? g.n : '맨손 (주먹)';
+  gunA.innerHTML = tk ? (p.thr[tk] + ' <s>/ 꾹 눌러 던지기</s>') : g ? (h.ld + ' <s>/ ' + AMMO[g.am].n + ' ' + p.bag[g.am] + '</s>') : '— <s>/ —</s>';
   gunR.textContent = p.reload > 0 ? '재장전…' : (p.healT > 0 ? '치료 중…' : '');
   const slots = p.hot.map((it, i) => {
-    const t = !it ? '—' : it.t === 'gun' ? GUNS[it.g.gi].n : HEALS[it.k].n + '×' + p.inv[it.k];
+    const t = !it ? '—' : it.t === 'gun' ? GUNS[it.g.gi].n : it.t === 'thr' ? THROWS[it.k].n + '×' + p.thr[it.k] : HEALS[it.k].n + '×' + p.inv[it.k];
     return (i===p.sel ? '<b>' : '') + (i+1) + ' ' + t + (i===p.sel ? '</b>' : '');
   }).join('  ') + (p.gb.length ? '  · 가방 총 ' + p.gb.length : '');
   const arm = '헬멧 ' + (p.helm ? '<b>Lv'+p.helm+'</b>' : '—')
@@ -3807,12 +4059,17 @@ function cantShoot(){
 canvas.addEventListener('mousedown', (e) => {
   if (!playing){ return; }
   if (!locked){ lockMouse(); return; }
+  if (heldThr(me())){                            // 투척류 — 왼쪽 꾹 = 세기 모으기, 충전 중 오른쪽 = 취소 (lastdrop-09)
+    if (e.button === 0) startCharge();
+    if (e.button === 2) cancelCharge();
+    return;
+  }
   if (e.button === 0){ const w = cantShoot(); if (w) why(w); }
   if (e.button === 0){ firing = true; fireQ = performance.now(); }   // 짧게 톡 친 클릭도 다음 프레임에 쏜다
   if (e.button === 2) setScope(true);
 });
 addEventListener('mouseup', (e) => {
-  if (e.button === 0) firing = false;
+  if (e.button === 0){ firing = false; if (charge.on) releaseThrow(); }
   if (e.button === 2) setScope(false);
 });
 addEventListener('contextmenu', (e) => { if (playing) e.preventDefault(); });
@@ -3951,6 +4208,7 @@ function frame(now){
     }
   }
   updateFx(dt);
+  if (MAP && playing){ updateNades(dt); updateThrowFx(dt); }   // 투척류 (lastdrop-09)
   updateMyView(dt);
   renderHome(dt);
   sun.position.set(me().x - 180, 150, me().z + 120);
@@ -4371,7 +4629,7 @@ function updateMyView(dt){
   if (myChute.visible) myChute.position.set(p.x, p.y + 4.4, p.z);
   cam.position.copy(show ? CAM_TP : CAM_FP);
   if (viewGun) viewGun.visible = !show && !me().swim && !(scoped && heldDef(me()) && heldDef(me()).scope);   // 수영 중엔 총을 등에 (lastdrop-10)
-  crossEl.style.visibility = show || (scoped && heldDef(me()) && heldDef(me()).scope) ? 'hidden' : '';   // 3인칭엔 조준점 없음
+  crossEl.style.visibility = show || heldThr(me()) || (scoped && heldDef(me()) && heldDef(me()).scope) ? 'hidden' : '';   // 투척류를 든 동안엔 조준점 없음 (lastdrop-09)   // 3인칭엔 조준점 없음
   if (endT > 0){                                 // 결과 화면 전 — 내 캐릭터를 중심으로 천천히 돈다
     yawO.position.set(p.x, p.y + 1.2, p.z); yawO.rotation.y += dt * 0.6; pitO.rotation.x = -0.45;
     yawO.updateMatrixWorld(true); cam.lookAt(p.x, p.y + 0.4, p.z);   // 판이 끝났으니 카메라 각도는 되돌리지 않는다

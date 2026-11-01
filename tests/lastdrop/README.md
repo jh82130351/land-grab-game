@@ -47,3 +47,10 @@ URL 에 `?seed=1001` 을 붙이면 같은 섬이 다시 만들어진다. 모든 
 | 봇 — 다리 4개 · 헤엄 건너기 | `python3 run.py 9461 $U botcross.js '{"map":"mountain"}'` | `도착:true` |
 | 봇전 한 판 (자기장 그대로) | `python3 run.py 9461 $U botmatch.js '{"map":"mountain","speed":1,"norender":1,"cap":1100}'` | 12~15분 · `오류:0` |
 | 성능 | `python3 run.py 9461 $U perf.js '{"map":"mountain"}'` | 맵끼리 비교 |
+
+## 투척류 (lastdrop-09)
+
+| 시험 | 명령 | 통과 기준 |
+|---|---|---|
+| 전리품·줍기·핫바 · 충전 거리 · 수류탄 · 섬광 · 봇 섬광/투척 · 수영 중 | `python3 run.py 9461 $U throws.js '{"map":"meadow"}'` (desert · mountain) | 수류탄 4초 · 120/60/1.5/0 · 벽 뒤 0 · 섬광 0m 10초 1.0 · 5m 5초 0.5 · 벽 뒤 0 |
+| 실전 투척 (모든 봇 어려움) | `python3 run.py 9461 $U botmatch.js '{"map":"desert","tier":4}'` | `오류:0` · `투척.던짐 > 0` |

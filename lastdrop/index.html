@@ -54,6 +54,10 @@ body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
    #cross·#hit·#prompt·#why·#scope 는 position:fixed. #hud 와 그 조상에 transform·filter·backdrop-filter·contain 을
    걸면 fixed 의 기준이 뷰포트가 아니게 되므로 걸지 말 것 (.pan 처럼 자식에 거는 건 괜찮다). */
 #cross{position:fixed;left:50%;top:50%;width:0;height:0}
+#flash{position:absolute;inset:0;pointer-events:none;background:#fff;opacity:0;z-index:4}
+#pow{position:fixed;left:50%;bottom:118px;transform:translateX(-50%);width:160px;height:5px;background:rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.35);pointer-events:none}
+#pow[hidden]{display:none}
+#pow s{display:block;height:100%;width:0;background:#f2e9d8}
 #cross i{position:absolute;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.6)}
 #cross .v{width:2px;height:8px;margin-left:-1px}
 #cross .h{height:2px;width:8px;margin-top:-1px}
@@ -259,6 +263,8 @@ button.link{font:inherit;font-size:12px;color:var(--dim);background:none;border:
 <div id="app">
   <canvas id="gl"></canvas>
   <div id="dmg"></div>
+  <div id="flash"></div>
+  <div id="pow" hidden><s></s></div>
   <div id="zonefx"></div>
   <div id="scope"></div>
 
