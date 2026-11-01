@@ -194,7 +194,7 @@ python3 run.py 9461 $U perf.js '{"map":"mountain"}'      # 비교 "meadow"
 - `node --check tests/lastdrop/{mtgen,mtplay,botcross,perf,botmatch}.js` 통과.
 
 ## 새 커밋 해시
-- (아래 커밋 뒤 채움)
+- `2421576` — 코드·시험·문서·스크린샷
 
 ## 감독 확인 요청 사항 / 남은 이슈
 1. **3층 주택 "방 4~6개"**: 07 저택 생성기를 그대로 써서 층마다 3개(홀·앞방·뒷방), 집 전체 9개 + 옥상이다. 4~6이 "층마다"라면 생성기를 고쳐야 한다.
