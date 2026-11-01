@@ -35,3 +35,15 @@ U=http://127.0.0.1:8761/lastdrop/index.html
 |---|---|---|
 | 계단 건물마다 안에서 무작위 이동·점프 30초 × 6명 (나 3 · 봇 3) | `python3 run.py 9461 $U indoor.js '{"map":"meadow","seed":1,"sec":30}'` (사막 `"desert"`) | `완전갇힘:0` · `벽속:0` · `관통:0` (맵 키가 틀리면 바로 알린다) |
 | 머리 충돌 — 머리 위 0.1~1.0m 판 밑에서 점프 | `python3 run.py 9461 $U ceiling.js '{"map":"meadow"}'` | 모두 `판속프레임:0` · `판위프레임:0` |
+
+## 산지 (lastdrop-10)
+
+URL 에 `?seed=1001` 을 붙이면 같은 섬이 다시 만들어진다. 모든 산지 시험은 `MAP_ID === 'mountain'` 을 먼저 확인한다.
+
+| 시험 | 명령 | 통과 기준 |
+|---|---|---|
+| 생성 — 시간 · 배치 · 산 높이 · 강 단면 · 다리 · 도로 연결 | `python3 run.py 9461 $U mtgen.js '{"map":"mountain"}'` | 5초 안 · `도로덩어리:1` · `err:[]` |
+| 나 — 헤엄 횡단 · 수영 중 사격 · 머리만 · 다리 걷기/지프 · 미끄러짐 | `python3 run.py 9461 $U mtplay.js '{"map":"mountain"}'` | 수영 28~32초 · 다리 4개 모두 `건넘` · 오르막 0m |
+| 봇 — 다리 4개 · 헤엄 건너기 | `python3 run.py 9461 $U botcross.js '{"map":"mountain"}'` | `도착:true` |
+| 봇전 한 판 (자기장 그대로) | `python3 run.py 9461 $U botmatch.js '{"map":"mountain","speed":1,"norender":1,"cap":1100}'` | 12~15분 · `오류:0` |
+| 성능 | `python3 run.py 9461 $U perf.js '{"map":"mountain"}'` | 맵끼리 비교 |
