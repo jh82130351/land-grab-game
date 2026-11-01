@@ -440,16 +440,18 @@ function makeBuilding(o){
   // 창틀·처마 띠 (보이기만)
   for (let k = 1; k <= nf; k++) put(BOX, x, F(k) - 0.12, z, w + 0.16, 0.18, d + 0.16, o.trim);
   // ── 계단 (층마다 한 벌: 줄 A 6단 → 참 → 줄 B 6단) ──
+  // 1층 계단(k=0)은 단·참을 바닥까지 채운다 — 밑이 비어 있으면 옆으로 들어가 갇힌다 (07-c).
+  // 위층 계단 밑은 아래 계단을 오르는 사람의 머리 자리라 채우지 않는다 (판 그대로 — 아래에서 올라타기는 이동 판정이 막는다).
   for (let k = 0; k < flights; k++){
-    const fb = F(k), last = k === flights - 1;
+    const fb = F(k), last = k === flights - 1, bot = (y) => k === 0 ? fb - 0.05 : y;
     for (let i = 0; i < 6; i++){                 // 줄 A: x 가 줄어드는 쪽으로 오른다
       const t = fb + RISE * (i + 1), xa = sx + SW - STEP_RUN * (i + 1);
-      solid(xa, xa + STEP_RUN, Math.max(fb - 0.05, t - 0.32), t, sz + STAIR.lane, sz + STAIR.lane*2, o.stairC);
+      solid(xa, xa + STEP_RUN, bot(Math.max(fb - 0.05, t - 0.32)), t, sz + STAIR.lane, sz + STAIR.lane*2, o.stairC);
     }
-    solid(sx, sx + STAIR.land, fb + 1.7 - 0.3, fb + 1.7, sz, sz + STAIR.lane*2, o.stairC);   // 참
+    solid(sx, sx + STAIR.land, bot(fb + 1.7 - 0.3), fb + 1.7, sz, sz + STAIR.lane*2, o.stairC);   // 참
     for (let i = 0; i < 6; i++){                 // 줄 B: x 가 느는 쪽으로 오른다 — 마지막 단 = 위층 바닥
       const t = fb + 1.7 + RISE * (i + 1), xb = sx + STAIR.land + STEP_RUN * i;
-      solid(xb, xb + STEP_RUN, t - 0.32, t, sz, sz + STAIR.lane, o.stairC);
+      solid(xb, xb + STEP_RUN, bot(t - 0.32), t, sz, sz + STAIR.lane, o.stairC);
     }
     solid(sx + STAIR.land + STAIR.cut, sx + SW, fb, fb + FLOOR_H + (last ? 1.0 : 0), sz + STAIR.lane - 0.05, sz + STAIR.lane + 0.05, o.trim);   // 두 줄 사이 칸막이 (참 0.6m 앞에서 끊는다)
     if (last){                                   // 맨 위 — 줄 A 쪽 빈 구멍에 난간
@@ -2454,14 +2456,14 @@ function updateBot(b, dt){
     mx = Math.sin(b.detourA); mz = Math.cos(b.detourA);
     if (!b.target) b.yaw = b.detourA;
   }
-  const ox = b.x, oz = b.z;
+  const ox = b.x, oy = b.y, oz = b.z;
   moveEnt(b, mx*sp, mz*sp);
   if ((mx || mz) && sp > 0){                   // 직선으로만 가면 벽·모서리에 끼어 그대로 선다
     const got = Math.hypot(b.x-ox, b.z-oz);
     b.stuckT = got < sp*0.3 ? (b.stuckT || 0) + dt : 0;
     if (b.stuckT > 0.4){ b.stuckT = 0; botDetour(b, Math.atan2(mx, mz)); }
   }
-  b.y = floorAt(b.x, b.z, b.y);                  // 나와 같은 바닥 판정 — 층 바닥·계단·지붕 (lastdrop-07)
+  botFloor(b, ox, oy, oz);                       // 나와 같은 바닥 판정 — 층 바닥·계단·지붕 (lastdrop-07) · 끼면 밀어내기 (07-c)
   botStairWatch(b, dt);
 }
 function botDetour(b, a){
@@ -2494,8 +2496,45 @@ function canStep(e, x, z){
   });
   if (top === e.y || blocked(x, top, z, R)) return false;   // 그 높이에 섰을 때 몸(발~머리)이 걸리면 못 간다 (천장·벽)
   const f = floorAt(x, z, e.y);
-  if (f > e.y) e.y = f;                          // 발밑이 한 단 위면 바로 올라선다
+  if (f > e.y){                                  // 발밑이 한 단 위면 바로 올라선다 — 그 높이에서 몸이 걸리면 못 간다 (07-c)
+    if (stuckAt(x, f, z, R)) return false;
+    e.y = f;
+  }
   return true;
+}
+// 머리 위 — 몸 둘레 R 안에서 머리(y+1.7) 위에 있는 가장 낮은 상자 아랫면 (07-c)
+function ceilAt(x, z, y, R){
+  let c0 = 1e9;
+  eachColNear(x, z, R, (c) => {
+    if (c.y0 >= y + 1.65 && c.y0 < c0 && x > c.x - c.hw - R && x < c.x + c.hw + R && z > c.z - c.hd - R && z < c.z + c.hd + R) c0 = c.y0;
+    return false;
+  });
+  return c0;
+}
+// 몸이 정말 끼었나 — 발에서 0.6m(STEP_UP) 넘게 솟은 상자가 몸(발~머리)에 닿는다. 그보다 낮은 건 곧 올라설 단이라 끼인 게 아니다 (07-c)
+function stuckAt(x, y, z, r){
+  return eachColNear(x, z, r, (c) => c.y1 > y + STEP_UP && c.y0 < y + 1.7
+    && x > c.x - c.hw - r && x < c.x + c.hw + r && z > c.z - c.hd - r && z < c.z + c.hd + r);
+}
+// 위아래로 움직인 뒤 몸이 상자 속이면 가장 얕은 쪽(가까운 빈 자리)으로 0.5m 까지 밀어낸다. 못 빼면 움직이기 전 자리로 (07-c)
+// 움직이기 전에도 끼어 있었으면 되돌리지 않는다 — 걸어 나올 수 있게.
+const PUSH_DIRS = Array.from({ length:16 }, (_, i) => [Math.sin(i * Math.PI / 8), Math.cos(i * Math.PI / 8)]);
+let pushOuts = 0, pushBacks = 0;
+function unpen(e, ox, oy, oz){
+  if (!stuckAt(e.x, e.y, e.z, bodyR(e.x, e.z))) return;
+  for (let d = 0.05; d <= 0.501; d += 0.05)
+    for (const [sx, sz] of PUSH_DIRS){
+      const x = e.x + sx * d, z = e.z + sz * d;
+      if (!stuckAt(x, e.y, z, bodyR(x, z))){ e.x = x; e.z = z; pushOuts++; return; }
+    }
+  if (stuckAt(ox, oy, oz, bodyR(ox, oz))) return;
+  e.x = ox; e.y = oy; e.z = oz; pushBacks++;
+}
+// 봇 바닥 — 나와 같은 판정: 올라설 높이에서 몸이 걸리면 안 올라서고, 끼면 밀어낸다 (07-c)
+function botFloor(b, ox, oy, oz){
+  const f = floorAt(b.x, b.z, b.y);
+  if (f <= b.y || !stuckAt(b.x, f, b.z, bodyR(b.x, b.z))) b.y = f;
+  unpen(b, ox, oy, oz);
 }
 function moveEnt(e, dx, dz){                     // 0.12m 조각으로 나눠 간다 (한 번에 크게 가면 몸이 두세 단 앞까지 닿아 막힌다)
   const n = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dz)) / 0.12)), sx = dx / n, sz = dz / n;
@@ -2524,15 +2563,24 @@ function movePlayer(dt){
   if (keys.KeyA){ mx -= Math.cos(y); mz += Math.sin(y); }
   const L = Math.hypot(mx,mz);
   if (L > 0){ mx/=L; mz/=L; if (p.healT > 0){ p.healT = 0; hudGun(); } }
+  const ox = p.x, oy = p.y, oz = p.z;
   moveEnt(p, mx*sp*dt, mz*sp*dt);
 
-  const floor = floorAt(p.x, p.z, p.y);          // 지붕·층 바닥·계단 위에 설 수 있게
-  if (p.onGround && floor > p.y && floor <= p.y + STEP_UP){ p.y = floor; }   // 계단을 오르면 바로 그 단에
-  else if (p.onGround && p.vy <= 0 && floor < p.y && floor >= p.y - 0.35){ p.y = floor; }   // 내려갈 때도 단마다 붙어 간다
+  const R = bodyR(p.x, p.z), fits = (y) => !stuckAt(p.x, y, p.z, R);   // 그 높이에 서도 몸이 안 끼나 (07-c)
+  const step = floorAt(p.x, p.z, p.y);           // 발밑 0.6m 안 가장 높은 윗면 — 층 바닥·계단·지붕
+  if (p.onGround && step > p.y && step <= p.y + STEP_UP && fits(step)){ p.y = step; }   // 계단을 오르면 바로 그 단에
+  else if (p.onGround && p.vy <= 0 && step < p.y && step >= p.y - 0.35 && fits(step)){ p.y = step; }   // 내려갈 때도 단마다 붙어 간다
+  const floor = floorAt(p.x, p.z, p.y - 0.55);   // 내려앉을 바닥은 발 높이 이하 윗면만 — 아래에서 올라온 상자엔 안 올라탄다 (07-c)
   p.vy -= GRAV*dt;
   if (keys.Space && p.onGround && p.st === 0){ p.vy = JUMP; p.onGround = false; }
-  p.y += p.vy*dt;
+  let ny = p.y + p.vy*dt;
+  if (p.vy > 0){                                 // 머리가 천장·계단 판 아랫면에 닿으면 거기서 멈춘다 (07-c)
+    const ceil = ceilAt(p.x, p.z, p.y, R);
+    if (ny + 1.7 > ceil){ ny = Math.max(p.y, ceil - 1.7); p.vy = 0; }
+  }
+  p.y = ny;
   if (p.y <= floor){ p.y = floor; p.vy = 0; p.onGround = true; } else p.onGround = false;
+  unpen(p, ox, oy, oz);
   yawO.position.set(p.x, p.y + eyeH(p), p.z);
 }
 
